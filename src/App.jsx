@@ -223,8 +223,9 @@ function App() {
       // Initiate WebRTC call to new user
       updatedUsers.forEach((user) => {
         if (user.id !== socket.id && !peersRef.current[user.id]) {
+          console.log('Creating peer connection to', user.id, '(as initiator/impolite)');
           const peer = createPeer(user.id, true);
-          peersRef.current[user.id] = { peer };
+          peersRef.current[user.id] = { peer, polite: false }; // Initiator is impolite
         }
       });
     });
@@ -259,12 +260,31 @@ function App() {
         peer = peerObj.peer;
       } else {
         peer = createPeer(callerId, false);
-        peersRef.current[callerId] = { peer };
+        peersRef.current[callerId] = { peer, polite: true }; // Receiver is polite
       }
 
       try {
-        // Set remote description first
-        await peer.setRemoteDescription(new RTCSessionDescription(offer));
+        // Perfect negotiation pattern
+        const offerCollision = (peer.signalingState !== 'stable') || makingOfferRef.current[callerId];
+        const polite = peersRef.current[callerId]?.polite ?? true;
+
+        ignoringOfferRef.current[callerId] = !polite && offerCollision;
+
+        if (ignoringOfferRef.current[callerId]) {
+          console.log('Ignoring offer from', callerId, 'due to collision (we are impolite)');
+          return;
+        }
+
+        // If we're in the middle of something, rollback
+        if (peer.signalingState !== 'stable') {
+          console.log('Rolling back local description for', callerId);
+          await Promise.all([
+            peer.setLocalDescription({ type: 'rollback' }),
+            peer.setRemoteDescription(new RTCSessionDescription(offer))
+          ]);
+        } else {
+          await peer.setRemoteDescription(new RTCSessionDescription(offer));
+        }
 
         // Make sure local tracks are added before creating answer
         if (localStreamRef.current) {
@@ -281,9 +301,9 @@ function App() {
         const answer = await peer.createAnswer();
         await peer.setLocalDescription(answer);
         console.log('Sending answer to', callerId);
-        socket.emit('answer', { answer, target: callerId, callerId: socket.id });
+        socket.emit('answer', { answer: peer.localDescription, target: callerId, callerId: socket.id });
       } catch (err) {
-        console.error('Error handling offer:', err);
+        console.error('Error handling offer from', callerId, ':', err);
       }
     });
 
@@ -292,8 +312,13 @@ function App() {
       const peerObj = peersRef.current[callerId];
       if (peerObj && peerObj.peer) {
         try {
-          await peerObj.peer.setRemoteDescription(new RTCSessionDescription(answer));
-          console.log('Remote description set for', callerId);
+          // Only set if we're expecting an answer
+          if (peerObj.peer.signalingState === 'have-local-offer') {
+            await peerObj.peer.setRemoteDescription(new RTCSessionDescription(answer));
+            console.log('Remote description set for', callerId);
+          } else {
+            console.log('Unexpected answer from', callerId, '- signaling state:', peerObj.peer.signalingState);
+          }
         } catch (err) {
           console.error('Error handling answer:', err);
         }
@@ -304,9 +329,15 @@ function App() {
       const peerObj = peersRef.current[callerId];
       if (peerObj && peerObj.peer) {
         try {
-          await peerObj.peer.addIceCandidate(new RTCIceCandidate(candidate));
+          // Only add ICE candidates if we're not ignoring this peer
+          if (!ignoringOfferRef.current[callerId]) {
+            await peerObj.peer.addIceCandidate(new RTCIceCandidate(candidate));
+          }
         } catch (err) {
-          console.error('Error adding ice candidate:', err);
+          // ICE candidate errors are often harmless during renegotiation
+          if (err.name !== 'InvalidStateError') {
+            console.error('Error adding ice candidate:', err);
+          }
         }
       }
     });
@@ -522,21 +553,40 @@ function App() {
   const [speakingUsers, setSpeakingUsers] = useState(new Set());
   const [maximizedVideo, setMaximizedVideo] = useState(null);
 
-  const peersRef = useRef({}); // socketId -> { peer: RTCPeerConnection }
+  const peersRef = useRef({}); // socketId -> { peer: RTCPeerConnection, polite: boolean }
   const localStreamRef = useRef(null);
   const localVideoRef = useRef(null); // Keep for local preview in grid
   const makingOfferRef = useRef({}); // Track if we're in the middle of making an offer
+  const ignoringOfferRef = useRef({}); // For perfect negotiation pattern
 
   // Helper to renegotiate a peer connection (send new offer)
   const renegotiatePeer = async (targetId, peer) => {
-    if (makingOfferRef.current[targetId]) return; // Avoid racing
+    if (makingOfferRef.current[targetId]) {
+      console.log('Already making offer to', targetId, '- skipping');
+      return;
+    }
+
     makingOfferRef.current[targetId] = true;
+    console.log('Starting renegotiation with', targetId);
+
     try {
-      const offer = await peer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+      const offer = await peer.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true,
+        iceRestart: false
+      });
+
+      // Check if the signaling state is still valid
+      if (peer.signalingState !== 'stable' && peer.signalingState !== 'have-local-offer') {
+        console.log('Signaling state not ready:', peer.signalingState, '- skipping offer');
+        return;
+      }
+
       await peer.setLocalDescription(offer);
-      socket.emit('offer', { offer, target: targetId, callerId: socket.id });
+      console.log('Sending offer to', targetId);
+      socket.emit('offer', { offer: peer.localDescription, target: targetId, callerId: socket.id });
     } catch (err) {
-      console.error('Error renegotiating:', err);
+      console.error('Error renegotiating with', targetId, ':', err);
     } finally {
       makingOfferRef.current[targetId] = false;
     }
