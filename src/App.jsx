@@ -465,12 +465,30 @@ function App() {
   const peersRef = useRef({}); // socketId -> { peer: RTCPeerConnection }
   const localStreamRef = useRef(null);
   const localVideoRef = useRef(null); // Keep for local preview in grid
+  const makingOfferRef = useRef({}); // Track if we're in the middle of making an offer
+
+  // Helper to renegotiate a peer connection (send new offer)
+  const renegotiatePeer = async (targetId, peer) => {
+    if (makingOfferRef.current[targetId]) return; // Avoid racing
+    makingOfferRef.current[targetId] = true;
+    try {
+      const offer = await peer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+      await peer.setLocalDescription(offer);
+      socket.emit('offer', { offer, target: targetId, callerId: socket.id });
+    } catch (err) {
+      console.error('Error renegotiating:', err);
+    } finally {
+      makingOfferRef.current[targetId] = false;
+    }
+  };
 
   // Helper to create peer connection
   const createPeer = (targetId, isInitiator = false) => {
     const peer = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
         { urls: 'stun:global.stun.twilio.com:3478' }
       ]
     });
@@ -481,19 +499,18 @@ function App() {
       }
     };
 
+    peer.oniceconnectionstatechange = () => {
+      console.log(`ICE connection state with ${targetId}:`, peer.iceConnectionState);
+    };
+
     if (isInitiator) {
       peer.onnegotiationneeded = async () => {
-        try {
-          const offer = await peer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
-          await peer.setLocalDescription(offer);
-          socket.emit('offer', { offer, target: targetId, callerId: socket.id });
-        } catch (err) {
-          console.error('Error renegotiating:', err);
-        }
+        await renegotiatePeer(targetId, peer);
       };
     }
 
     peer.ontrack = (event) => {
+      console.log('Received track from', targetId, event.track.kind);
       setRemoteStreams(prev => {
         const existing = prev.find(p => p.id === targetId);
         if (existing) {
@@ -507,8 +524,12 @@ function App() {
       });
     };
 
+    // Add local tracks if they exist
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => peer.addTrack(track, localStreamRef.current));
+      localStreamRef.current.getTracks().forEach(track => {
+        console.log('Adding local track to peer:', track.kind);
+        peer.addTrack(track, localStreamRef.current);
+      });
     }
 
     return peer;
@@ -583,33 +604,46 @@ function App() {
     if (localStream) {
       const videoTrack = localStream.getVideoTracks()[0];
       if (videoTrack) {
+        // Turning OFF camera
         videoTrack.stop();
         localStream.removeTrack(videoTrack);
-        Object.values(peersRef.current).forEach(({ peer }) => {
+        Object.entries(peersRef.current).forEach(([peerId, { peer }]) => {
           const senders = peer.getSenders();
           const sender = senders.find(s => s.track && s.track.kind === 'video');
-          if (sender) peer.removeTrack(sender);
+          if (sender) {
+            peer.removeTrack(sender);
+            // Force renegotiation
+            renegotiatePeer(peerId, peer);
+          }
         });
         if (localStream.getAudioTracks().length === 0) {
           setLocalStream(null);
           localStreamRef.current = null;
         } else {
-          setLocalStream(new MediaStream(localStream.getTracks()));
-          localStreamRef.current = new MediaStream(localStream.getTracks());
+          const newStream = new MediaStream(localStream.getTracks());
+          setLocalStream(newStream);
+          localStreamRef.current = newStream;
         }
       } else {
+        // Turning ON camera (when audio stream already exists)
         try {
           const videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
           const newVideoTrack = videoStream.getVideoTracks()[0];
           localStream.addTrack(newVideoTrack);
-          Object.values(peersRef.current).forEach(({ peer }) => {
-            peer.addTrack(newVideoTrack, localStream);
+          const newStream = new MediaStream(localStream.getTracks());
+          setLocalStream(newStream);
+          localStreamRef.current = newStream;
+
+          // Add track to all peers and renegotiate
+          Object.entries(peersRef.current).forEach(([peerId, { peer }]) => {
+            peer.addTrack(newVideoTrack, newStream);
+            // Force renegotiation to send the new track
+            renegotiatePeer(peerId, peer);
           });
-          setLocalStream(new MediaStream(localStream.getTracks()));
-          localStreamRef.current = new MediaStream(localStream.getTracks());
-        } catch (err) { console.error(err); }
+        } catch (err) { console.error('Error getting video:', err); }
       }
     } else {
+      // No stream exists - get both video and audio
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode }, audio: true });
         stream.getAudioTracks().forEach(t => t.enabled = false);
@@ -617,10 +651,17 @@ function App() {
         socket.emit('toggle_mute', { roomId: roomIdRef.current, isMuted: true });
         setLocalStream(stream);
         localStreamRef.current = stream;
-        Object.values(peersRef.current).forEach(({ peer }) => {
-          stream.getTracks().forEach(track => peer.addTrack(track, stream));
+
+        // Add tracks to all peers and renegotiate
+        Object.entries(peersRef.current).forEach(([peerId, { peer }]) => {
+          stream.getTracks().forEach(track => {
+            console.log('Adding track to peer:', peerId, track.kind);
+            peer.addTrack(track, stream);
+          });
+          // Force renegotiation
+          renegotiatePeer(peerId, peer);
         });
-      } catch (err) { console.error(err); }
+      } catch (err) { console.error('Error getting media:', err); }
     }
   };
 
@@ -649,35 +690,45 @@ function App() {
     if (localStream) {
       const audioTrack = localStream.getAudioTracks()[0];
       if (audioTrack) {
+        // Just toggle enable/disable - no need to renegotiate
         audioTrack.enabled = !audioTrack.enabled;
         const isNowMuted = !audioTrack.enabled;
         setIsMuted(isNowMuted);
         socket.emit('toggle_mute', { roomId: roomIdRef.current, isMuted: isNowMuted });
       } else {
+        // Add new audio track
         try {
           const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          const audioTrack = audioStream.getAudioTracks()[0];
-          localStream.addTrack(audioTrack);
+          const newAudioTrack = audioStream.getAudioTracks()[0];
+          localStream.addTrack(newAudioTrack);
+          const newStream = new MediaStream(localStream.getTracks());
+          setLocalStream(newStream);
+          localStreamRef.current = newStream;
           setIsMuted(false);
           socket.emit('toggle_mute', { roomId: roomIdRef.current, isMuted: false });
-          Object.values(peersRef.current).forEach(({ peer }) => {
-            peer.addTrack(audioTrack, localStream);
+
+          // Add track to all peers and renegotiate
+          Object.entries(peersRef.current).forEach(([peerId, { peer }]) => {
+            peer.addTrack(newAudioTrack, newStream);
+            renegotiatePeer(peerId, peer);
           });
-          setLocalStream(new MediaStream(localStream.getTracks()));
-          localStreamRef.current = new MediaStream(localStream.getTracks());
-        } catch (err) { console.error(err); }
+        } catch (err) { console.error('Error getting audio:', err); }
       }
     } else {
+      // No stream exists - get audio only
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         setLocalStream(stream);
         localStreamRef.current = stream;
         setIsMuted(false);
         socket.emit('toggle_mute', { roomId: roomIdRef.current, isMuted: false });
-        Object.values(peersRef.current).forEach(({ peer }) => {
+
+        // Add tracks to all peers and renegotiate
+        Object.entries(peersRef.current).forEach(([peerId, { peer }]) => {
           stream.getTracks().forEach(track => peer.addTrack(track, stream));
+          renegotiatePeer(peerId, peer);
         });
-      } catch (err) { console.error(err); }
+      } catch (err) { console.error('Error getting audio:', err); }
     }
   };
 
