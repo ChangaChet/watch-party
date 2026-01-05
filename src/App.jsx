@@ -18,52 +18,98 @@ const VideoPlayer = ({ stream, muted = false }) => {
   const videoRef = useRef(null);
   const [hasVideo, setHasVideo] = useState(false);
   const [error, setError] = useState(null);
+  const retryTimeoutRef = useRef(null);
 
   useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
-      setError(null);
+    const video = videoRef.current;
+    if (!video || !stream) {
+      setHasVideo(false);
+      return;
+    }
 
-      // Attempt to play the video (needed for audio to work in some browsers)
-      const playPromise = videoRef.current.play();
+    // Set the stream
+    video.srcObject = stream;
+    setError(null);
+
+    // Function to attempt playback
+    const attemptPlay = () => {
+      if (!video.srcObject) return;
+
+      const playPromise = video.play();
       if (playPromise !== undefined) {
         playPromise.catch(e => {
-          console.log('VideoPlayer autoplay prevented:', e);
-          // For Safari, we may need user interaction
+          console.log('VideoPlayer autoplay prevented:', e.name);
           if (e.name === 'NotAllowedError') {
             setError('Click to play');
+          } else if (e.name === 'AbortError') {
+            // Retry after a short delay
+            retryTimeoutRef.current = setTimeout(attemptPlay, 500);
           }
         });
       }
+    };
 
-      const checkVideo = () => {
-        const videoTracks = stream.getVideoTracks();
-        setHasVideo(videoTracks.length > 0 && videoTracks[0].enabled && videoTracks[0].readyState === 'live');
-      };
+    // Check video track status
+    const checkVideo = () => {
+      const videoTracks = stream.getVideoTracks();
+      const hasLiveVideo = videoTracks.length > 0 &&
+        videoTracks[0].enabled &&
+        videoTracks[0].readyState === 'live';
+      setHasVideo(hasLiveVideo);
 
-      checkVideo();
-
-      stream.addEventListener('addtrack', checkVideo);
-      stream.addEventListener('removetrack', checkVideo);
-
-      const track = stream.getVideoTracks()[0];
-      if (track) {
-        track.onended = checkVideo;
-        track.onmute = () => setHasVideo(false);
-        track.onunmute = () => setHasVideo(true);
+      // If we have video, try to play
+      if (hasLiveVideo) {
+        attemptPlay();
       }
+    };
 
-      return () => {
-        stream.removeEventListener('addtrack', checkVideo);
-        stream.removeEventListener('removetrack', checkVideo);
+    // Initial check
+    checkVideo();
+
+    // Event listeners for track changes
+    stream.addEventListener('addtrack', checkVideo);
+    stream.addEventListener('removetrack', checkVideo);
+
+    // Track-level event listeners
+    const videoTrack = stream.getVideoTracks()[0];
+    if (videoTrack) {
+      videoTrack.onended = checkVideo;
+      videoTrack.onmute = () => setHasVideo(false);
+      videoTrack.onunmute = () => {
+        setHasVideo(true);
+        attemptPlay();
       };
-    } else {
-      setHasVideo(false);
     }
+
+    // Video element events
+    const handleLoadedData = () => {
+      console.log('VideoPlayer: loadeddata event');
+      setError(null);
+      checkVideo();
+    };
+
+    const handleCanPlay = () => {
+      setError(null);
+      attemptPlay();
+    };
+
+    video.addEventListener('loadeddata', handleLoadedData);
+    video.addEventListener('canplay', handleCanPlay);
+
+    // Cleanup
+    return () => {
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+      }
+      stream.removeEventListener('addtrack', checkVideo);
+      stream.removeEventListener('removetrack', checkVideo);
+      video.removeEventListener('loadeddata', handleLoadedData);
+      video.removeEventListener('canplay', handleCanPlay);
+    };
   }, [stream]);
 
   const handleClick = () => {
-    if (videoRef.current && error) {
+    if (videoRef.current) {
       videoRef.current.play()
         .then(() => setError(null))
         .catch(e => console.error('Play failed:', e));
@@ -78,7 +124,13 @@ const VideoPlayer = ({ stream, muted = false }) => {
         playsInline
         webkit-playsinline="true"
         muted={muted}
-        style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: hasVideo ? 1 : 0 }}
+        style={{
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          opacity: hasVideo ? 1 : 0,
+          transition: 'opacity 0.3s ease'
+        }}
         onError={(e) => {
           console.error('Video element error:', e);
           setError('Video error');
@@ -96,7 +148,7 @@ const VideoPlayer = ({ stream, muted = false }) => {
             justifyContent: 'center',
             color: error ? '#f59e0b' : '#666',
             background: '#000',
-            cursor: error ? 'pointer' : 'default'
+            cursor: 'pointer'
           }}
         >
           {error || 'Camera Off'}
@@ -126,6 +178,7 @@ function App() {
   const [selectedAudioTrack, setSelectedAudioTrack] = useState(0);
   const [selectedSubtitleTrack, setSelectedSubtitleTrack] = useState(-1); // -1 = off
   const [showTrackMenu, setShowTrackMenu] = useState(false);
+  const [subtitleUrl, setSubtitleUrl] = useState(''); // External VTT subtitle URL
 
   const videoRef = useRef(null);
   const youtubePlayerRef = useRef(null);
@@ -1172,10 +1225,22 @@ function App() {
                       onCanPlay={() => setVideoError(null)}
                       playsInline
                       webkit-playsinline="true"
-                    />
+                      crossOrigin="anonymous"
+                    >
+                      {/* External subtitle track */}
+                      {subtitleUrl && (
+                        <track
+                          kind="subtitles"
+                          src={subtitleUrl}
+                          srcLang="en"
+                          label="Subtitles"
+                          default
+                        />
+                      )}
+                    </video>
 
-                    {/* Track Selection Button */}
-                    {(audioTracks.length > 1 || subtitleTracks.length > 0) && (
+                    {/* Track Selection Button - Always visible for external subtitles */}
+                    {!isYouTube && (
                       <button
                         onClick={() => setShowTrackMenu(!showTrackMenu)}
                         style={{
@@ -1289,13 +1354,46 @@ function App() {
                           </div>
                         )}
 
-                        {audioTracks.length <= 1 && subtitleTracks.length === 0 && (
-                          <div style={{ color: '#aaa', fontSize: '0.9rem' }}>
-                            No additional tracks available.
-                            <br /><br />
-                            <small>Note: MKV files with embedded tracks are not supported by browsers. Use MP4 or HLS streams for multiple audio/subtitle tracks.</small>
-                          </div>
-                        )}
+                        {/* External Subtitle URL Input */}
+                        <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.2)' }}>
+                          <div style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '0.5rem' }}>📄 External Subtitles (VTT)</div>
+                          <input
+                            type="url"
+                            placeholder="Enter subtitle URL (.vtt)"
+                            value={subtitleUrl}
+                            onChange={(e) => setSubtitleUrl(e.target.value)}
+                            style={{
+                              width: '100%',
+                              padding: '0.5rem',
+                              background: 'rgba(255,255,255,0.1)',
+                              border: '1px solid rgba(255,255,255,0.2)',
+                              borderRadius: '4px',
+                              color: 'white',
+                              fontSize: '0.8rem',
+                              marginBottom: '0.5rem'
+                            }}
+                          />
+                          {subtitleUrl && (
+                            <button
+                              onClick={() => setSubtitleUrl('')}
+                              style={{
+                                width: '100%',
+                                padding: '0.5rem',
+                                background: 'rgba(239, 68, 68, 0.3)',
+                                border: 'none',
+                                borderRadius: '4px',
+                                color: 'white',
+                                cursor: 'pointer',
+                                fontSize: '0.8rem'
+                              }}
+                            >
+                              Clear Subtitles
+                            </button>
+                          )}
+                          <small style={{ color: '#888', display: 'block', marginTop: '0.5rem' }}>
+                            Note: Subtitle file must be in VTT format and CORS-enabled.
+                          </small>
+                        </div>
                       </div>
                     )}
 
