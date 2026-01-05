@@ -600,22 +600,28 @@ function App() {
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:global.stun.twilio.com:3478' },
-        // Free TURN servers from OpenRelay
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' },
+        // Free TURN servers from Metered
         {
-          urls: 'turn:openrelay.metered.ca:80',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
+          urls: 'turn:a.relay.metered.ca:80',
+          username: 'e918c18959e4ca5e02b6f882',
+          credential: 'rseLhk/YqIOE+xXx'
         },
         {
-          urls: 'turn:openrelay.metered.ca:443',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
+          urls: 'turn:a.relay.metered.ca:80?transport=tcp',
+          username: 'e918c18959e4ca5e02b6f882',
+          credential: 'rseLhk/YqIOE+xXx'
         },
         {
-          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
+          urls: 'turn:a.relay.metered.ca:443',
+          username: 'e918c18959e4ca5e02b6f882',
+          credential: 'rseLhk/YqIOE+xXx'
+        },
+        {
+          urls: 'turn:a.relay.metered.ca:443?transport=tcp',
+          username: 'e918c18959e4ca5e02b6f882',
+          credential: 'rseLhk/YqIOE+xXx'
         }
       ],
       iceCandidatePoolSize: 10
@@ -648,12 +654,11 @@ function App() {
       console.log(`Connection state with ${targetId}:`, peer.connectionState);
     };
 
-    if (isInitiator) {
-      peer.onnegotiationneeded = async () => {
-        console.log('Negotiation needed with', targetId);
-        await renegotiatePeer(targetId, peer);
-      };
-    }
+    // Enable negotiation for ALL peers - when tracks are added, trigger renegotiation
+    peer.onnegotiationneeded = async () => {
+      console.log('Negotiation needed with', targetId, '(isInitiator:', isInitiator, ')');
+      await renegotiatePeer(targetId, peer);
+    };
 
     peer.ontrack = (event) => {
       console.log('Received track from', targetId, '- kind:', event.track.kind, '- readyState:', event.track.readyState);
