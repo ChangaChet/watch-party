@@ -1225,9 +1225,8 @@ function App() {
                       onCanPlay={() => setVideoError(null)}
                       playsInline
                       webkit-playsinline="true"
-                      crossOrigin="anonymous"
                     >
-                      {/* External subtitle track */}
+                      {/* External subtitle track - Note: May not work with Real-Debrid due to CORS */}
                       {subtitleUrl && (
                         <track
                           kind="subtitles"
