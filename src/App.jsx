@@ -17,13 +17,24 @@ const extractYouTubeId = (url) => {
 const VideoPlayer = ({ stream, muted = false }) => {
   const videoRef = useRef(null);
   const [hasVideo, setHasVideo] = useState(false);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
+      setError(null);
 
       // Attempt to play the video (needed for audio to work in some browsers)
-      videoRef.current.play().catch(e => console.log('VideoPlayer autoplay prevented:', e));
+      const playPromise = videoRef.current.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(e => {
+          console.log('VideoPlayer autoplay prevented:', e);
+          // For Safari, we may need user interaction
+          if (e.name === 'NotAllowedError') {
+            setError('Click to play');
+          }
+        });
+      }
 
       const checkVideo = () => {
         const videoTracks = stream.getVideoTracks();
@@ -51,19 +62,44 @@ const VideoPlayer = ({ stream, muted = false }) => {
     }
   }, [stream]);
 
+  const handleClick = () => {
+    if (videoRef.current && error) {
+      videoRef.current.play()
+        .then(() => setError(null))
+        .catch(e => console.error('Play failed:', e));
+    }
+  };
+
   return (
     <>
       <video
         ref={videoRef}
         autoPlay
         playsInline
+        webkit-playsinline="true"
         muted={muted}
         style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: hasVideo ? 1 : 0 }}
-        onError={(e) => console.error('Video element error:', e)}
+        onError={(e) => {
+          console.error('Video element error:', e);
+          setError('Video error');
+        }}
+        onClick={handleClick}
       />
-      {!hasVideo && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', background: '#000' }}>
-          Camera Off
+      {(!hasVideo || error) && (
+        <div
+          onClick={handleClick}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: error ? '#f59e0b' : '#666',
+            background: '#000',
+            cursor: error ? 'pointer' : 'default'
+          }}
+        >
+          {error || 'Camera Off'}
         </div>
       )}
     </>
@@ -84,6 +120,7 @@ function App() {
   const [videoUrl, setVideoUrl] = useState('');
   const [activeTab, setActiveTab] = useState('chat');
   const [users, setUsers] = useState([]);
+  const [videoError, setVideoError] = useState(null);
 
   const videoRef = useRef(null);
   const youtubePlayerRef = useRef(null);
@@ -918,16 +955,58 @@ function App() {
                 {isYouTube ? (
                   <div id="youtube-player" style={{ width: '100%', height: '100%' }}></div>
                 ) : (
-                  <video
-                    ref={videoRef}
-                    src={currentVideoUrl}
-                    controls
-                    style={{ width: '100%', height: '100%', backgroundColor: '#000' }}
-                    onPlay={handleVideoPlay}
-                    onPause={handleVideoPause}
-                    onLoadedMetadata={() => socket.emit('ask_for_time', { roomId: roomIdRef.current })}
-                    playsInline
-                  />
+                  <>
+                    <video
+                      ref={videoRef}
+                      src={currentVideoUrl}
+                      controls
+                      style={{ width: '100%', height: '100%', backgroundColor: '#000' }}
+                      onPlay={handleVideoPlay}
+                      onPause={handleVideoPause}
+                      onLoadedMetadata={() => {
+                        setVideoError(null);
+                        socket.emit('ask_for_time', { roomId: roomIdRef.current });
+                      }}
+                      onError={(e) => {
+                        console.error('Video load error:', e);
+                        const video = e.target;
+                        let errorMsg = 'Failed to load video';
+                        if (video.error) {
+                          switch (video.error.code) {
+                            case 1: errorMsg = 'Video loading aborted'; break;
+                            case 2: errorMsg = 'Network error - check your connection'; break;
+                            case 3: errorMsg = 'Video format not supported'; break;
+                            case 4: errorMsg = 'Video not found or access denied'; break;
+                            default: errorMsg = 'Unknown video error';
+                          }
+                        }
+                        setVideoError(errorMsg);
+                      }}
+                      onCanPlay={() => setVideoError(null)}
+                      playsInline
+                      webkit-playsinline="true"
+                    />
+                    {videoError && (
+                      <div style={{
+                        position: 'absolute',
+                        inset: 0,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: 'rgba(0,0,0,0.9)',
+                        color: '#ef4444',
+                        padding: '2rem',
+                        textAlign: 'center'
+                      }}>
+                        <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⚠️</div>
+                        <div style={{ fontSize: '1.2rem', fontWeight: 'bold', marginBottom: '0.5rem' }}>{videoError}</div>
+                        <div style={{ fontSize: '0.9rem', color: '#999', maxWidth: '300px' }}>
+                          This video may not be compatible with your browser. Try a different browser or video source.
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             ) : (
