@@ -1226,6 +1226,50 @@ function App() {
     setVideoUrl('');
   };
 
+  // Handle m3u/m3u8 file upload
+  const handleM3uUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target.result;
+      const lines = content.split('\n');
+
+      // Parse m3u/m3u8 file
+      const urls = [];
+      for (const line of lines) {
+        const trimmedLine = line.trim();
+        // Skip comments and empty lines
+        if (trimmedLine.startsWith('#') || !trimmedLine) continue;
+
+        // Check if it's a URL
+        if (trimmedLine.startsWith('http://') || trimmedLine.startsWith('https://')) {
+          urls.push(trimmedLine);
+        }
+      }
+
+      if (urls.length === 0) {
+        alert('No valid URLs found in the m3u file');
+        return;
+      }
+
+      // Add all URLs to playlist
+      urls.forEach(url => {
+        socket.emit('add_to_playlist', { roomId, videoUrl: url });
+      });
+
+      alert(`Added ${urls.length} video(s) from m3u file to playlist`);
+    };
+
+    reader.onerror = () => {
+      alert('Error reading file');
+    };
+
+    reader.readAsText(file);
+    e.target.value = ''; // Reset file input
+  };
+
   const handleChangeVideo = (index) => {
     socket.emit('change_video', { roomId, index });
   };
@@ -1744,6 +1788,28 @@ function App() {
                 />
                 <button type="submit" className="btn btn-primary">+ Add</button>
               </form>
+              <div style={{ padding: '0 0.75rem 0.5rem', display: 'flex', gap: '0.5rem' }}>
+                <label
+                  className="btn"
+                  style={{
+                    flex: 1,
+                    textAlign: 'center',
+                    background: 'rgba(99, 102, 241, 0.2)',
+                    border: '1px dashed rgba(99, 102, 241, 0.5)',
+                    cursor: 'pointer',
+                    fontSize: '0.8rem',
+                    padding: '0.5rem'
+                  }}
+                >
+                  📂 Upload m3u/m3u8 file
+                  <input
+                    type="file"
+                    accept=".m3u,.m3u8"
+                    onChange={handleM3uUpload}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+              </div>
               <div className="playlist-items">
                 {playlist.map((url, idx) => (
                   <div
