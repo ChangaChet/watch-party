@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Playback Test</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background: #1a1a1a;
+            color: white;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .video-box {
+            background: black;
+            margin-bottom: 20px;
+            padding: 10px;
+            border: 1px solid #333;
+        }
+
+        h2 {
+            color: #a78bfa;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>Diagnostic Test Page</h1>
+        <p>If these videos play here, the issue is in the React App. If they don't, it's a browser/network issue.</p>
+
+        <div class="video-box">
+            <h2>1. Direct MP4 File (HTML5 Video)</h2>
+            <video width="100%" controls>
+                <source src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+                    type="video/mp4">
+                Your browser does not support the video tag.
+            </video>
+        </div>
+
+        <div class="video-box">
+            <h2>2. YouTube Embed (Iframe)</h2>
+            <iframe width="100%" height="400" src="https://www.youtube.com/embed/jNQXAC9IVRw"
+                title="YouTube video player" frameborder="0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowfullscreen></iframe>
+        </div>
+    </div>
+</body>
+
+</html>
