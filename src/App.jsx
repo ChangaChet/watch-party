@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
+import Hls from 'hls.js';
 import './App.css';
 
 const SOCKET_URL = import.meta.env.PROD
@@ -182,6 +183,7 @@ function App() {
 
   const videoRef = useRef(null);
   const youtubePlayerRef = useRef(null);
+  const hlsRef = useRef(null); // HLS.js instance
   const messagesEndRef = useRef(null);
   const roomIdRef = useRef('');
   const usernameRef = useRef('');
@@ -192,6 +194,7 @@ function App() {
 
   const currentVideoUrl = playlist[currentIndex];
   const isYouTube = currentVideoUrl && (currentVideoUrl.includes('youtube.com') || currentVideoUrl.includes('youtu.be'));
+  const isHLS = currentVideoUrl && (currentVideoUrl.includes('.m3u8') || currentVideoUrl.includes('m3u8'));
 
   // Update refs when state changes
   useEffect(() => {
@@ -581,6 +584,116 @@ function App() {
       currentVideoIdRef.current = null;
     }
   }, [currentVideoUrl, isYouTube]); // Removed isPlaying and roomId from dependencies
+
+  // Initialize HLS.js for HLS streams
+  useEffect(() => {
+    if (!isHLS || !currentVideoUrl || !videoRef.current) {
+      // Cleanup if not HLS
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      return;
+    }
+
+    // Check if browser supports HLS natively (Safari)
+    if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
+      // Safari has native HLS support
+      videoRef.current.src = currentVideoUrl;
+      return;
+    }
+
+    // Use hls.js for other browsers
+    if (Hls.isSupported()) {
+      // Cleanup previous HLS instance
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+      }
+
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true
+      });
+
+      hls.loadSource(currentVideoUrl);
+      hls.attachMedia(videoRef.current);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        console.log('HLS manifest parsed');
+        setVideoError(null);
+
+        // Get audio tracks
+        const hlsAudioTracks = hls.audioTracks;
+        if (hlsAudioTracks && hlsAudioTracks.length > 0) {
+          const tracks = hlsAudioTracks.map((track, idx) => ({
+            id: idx,
+            label: track.name || track.lang || `Audio ${idx + 1}`,
+            language: track.lang
+          }));
+          setAudioTracks(tracks);
+          console.log('HLS Audio tracks:', tracks);
+        }
+
+        // Get subtitle tracks
+        const hlsSubtitleTracks = hls.subtitleTracks;
+        if (hlsSubtitleTracks && hlsSubtitleTracks.length > 0) {
+          const tracks = hlsSubtitleTracks.map((track, idx) => ({
+            id: idx,
+            label: track.name || track.lang || `Subtitle ${idx + 1}`,
+            language: track.lang
+          }));
+          setSubtitleTracks(tracks);
+          console.log('HLS Subtitle tracks:', tracks);
+        }
+      });
+
+      hls.on(Hls.Events.ERROR, (event, data) => {
+        console.error('HLS Error:', data);
+        if (data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              setVideoError('Network error loading HLS stream');
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              setVideoError('Media error - attempting recovery');
+              hls.recoverMediaError();
+              break;
+            default:
+              setVideoError('Fatal HLS error');
+              hls.destroy();
+              break;
+          }
+        }
+      });
+
+      hlsRef.current = hls;
+
+      // Cleanup on unmount
+      return () => {
+        hls.destroy();
+        hlsRef.current = null;
+      };
+    } else {
+      setVideoError('HLS is not supported in this browser');
+    }
+  }, [currentVideoUrl, isHLS]);
+
+  // Switch HLS audio track
+  useEffect(() => {
+    if (hlsRef.current && selectedAudioTrack >= 0) {
+      hlsRef.current.audioTrack = selectedAudioTrack;
+      console.log('Switched HLS audio track to:', selectedAudioTrack);
+    }
+  }, [selectedAudioTrack]);
+
+  // Switch HLS subtitle track
+  useEffect(() => {
+    if (hlsRef.current) {
+      hlsRef.current.subtitleTrack = selectedSubtitleTrack;
+      console.log('Switched HLS subtitle track to:', selectedSubtitleTrack);
+    }
+  }, [selectedSubtitleTrack]);
 
   // Auto-play MP4 videos if they should be playing when user joins
   useEffect(() => {
@@ -1201,7 +1314,7 @@ function App() {
                   <>
                     <video
                       ref={videoRef}
-                      src={currentVideoUrl}
+                      src={isHLS ? undefined : currentVideoUrl}
                       controls
                       style={{ width: '100%', height: '100%', backgroundColor: '#000' }}
                       onPlay={handleVideoPlay}

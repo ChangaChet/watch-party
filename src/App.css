@@ -91,7 +91,7 @@ body {
 .main-content {
   display: flex;
   flex: 1;
-  overflow: hidden;
+  overflow: auto;
   gap: 1rem;
   padding: 1rem;
   min-height: 0;
