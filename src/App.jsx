@@ -251,20 +251,36 @@ function App() {
 
     // WebRTC Signaling Listeners
     socket.on('offer', async ({ offer, callerId }) => {
+      console.log('Received offer from', callerId);
       let peerObj = peersRef.current[callerId];
       let peer;
 
       if (peerObj) {
         peer = peerObj.peer;
       } else {
-        peer = createPeer(callerId);
+        peer = createPeer(callerId, false);
         peersRef.current[callerId] = { peer };
       }
 
       try {
+        // Set remote description first
         await peer.setRemoteDescription(new RTCSessionDescription(offer));
+
+        // Make sure local tracks are added before creating answer
+        if (localStreamRef.current) {
+          const senders = peer.getSenders();
+          localStreamRef.current.getTracks().forEach(track => {
+            const existingSender = senders.find(s => s.track && s.track.kind === track.kind);
+            if (!existingSender) {
+              console.log('Adding local track before answer:', track.kind);
+              peer.addTrack(track, localStreamRef.current);
+            }
+          });
+        }
+
         const answer = await peer.createAnswer();
         await peer.setLocalDescription(answer);
+        console.log('Sending answer to', callerId);
         socket.emit('answer', { answer, target: callerId, callerId: socket.id });
       } catch (err) {
         console.error('Error handling offer:', err);
@@ -272,10 +288,12 @@ function App() {
     });
 
     socket.on('answer', async ({ answer, callerId }) => {
+      console.log('Received answer from', callerId);
       const peerObj = peersRef.current[callerId];
       if (peerObj && peerObj.peer) {
         try {
           await peerObj.peer.setRemoteDescription(new RTCSessionDescription(answer));
+          console.log('Remote description set for', callerId);
         } catch (err) {
           console.error('Error handling answer:', err);
         }
@@ -528,40 +546,84 @@ function App() {
   const createPeer = (targetId, isInitiator = false) => {
     const peer = new RTCPeerConnection({
       iceServers: [
+        // STUN servers
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:global.stun.twilio.com:3478' }
-      ]
+        { urls: 'stun:global.stun.twilio.com:3478' },
+        // Free TURN servers from OpenRelay
+        {
+          urls: 'turn:openrelay.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
+      ],
+      iceCandidatePoolSize: 10
     });
 
     peer.onicecandidate = (event) => {
       if (event.candidate) {
+        console.log('Sending ICE candidate to', targetId);
         socket.emit('ice-candidate', { candidate: event.candidate, target: targetId, callerId: socket.id });
       }
     };
 
     peer.oniceconnectionstatechange = () => {
       console.log(`ICE connection state with ${targetId}:`, peer.iceConnectionState);
+      // Log when connection fails
+      if (peer.iceConnectionState === 'failed') {
+        console.error('ICE connection failed with', targetId);
+        // Try to restart ICE
+        peer.restartIce();
+      }
+      if (peer.iceConnectionState === 'disconnected') {
+        console.warn('ICE disconnected from', targetId, '- may reconnect');
+      }
+      if (peer.iceConnectionState === 'connected') {
+        console.log('Successfully connected to', targetId);
+      }
+    };
+
+    peer.onconnectionstatechange = () => {
+      console.log(`Connection state with ${targetId}:`, peer.connectionState);
     };
 
     if (isInitiator) {
       peer.onnegotiationneeded = async () => {
+        console.log('Negotiation needed with', targetId);
         await renegotiatePeer(targetId, peer);
       };
     }
 
     peer.ontrack = (event) => {
-      console.log('Received track from', targetId, event.track.kind);
+      console.log('Received track from', targetId, '- kind:', event.track.kind, '- readyState:', event.track.readyState);
+
+      // Listen for track becoming live
+      event.track.onunmute = () => {
+        console.log('Track unmuted from', targetId, event.track.kind);
+      };
+
       setRemoteStreams(prev => {
         const existing = prev.find(p => p.id === targetId);
         if (existing) {
           // If stream is different, update it
           if (existing.stream.id !== event.streams[0].id) {
+            console.log('Updating stream for', targetId);
             return prev.map(p => p.id === targetId ? { ...p, stream: event.streams[0] } : p);
           }
           return prev;
         }
+        console.log('Adding new remote stream for', targetId);
         return [...prev, { id: targetId, stream: event.streams[0] }];
       });
     };
@@ -569,7 +631,7 @@ function App() {
     // Add local tracks if they exist
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => {
-        console.log('Adding local track to peer:', track.kind);
+        console.log('Adding local track to peer', targetId, ':', track.kind, '- enabled:', track.enabled);
         peer.addTrack(track, localStreamRef.current);
       });
     }
