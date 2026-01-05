@@ -121,6 +121,11 @@ function App() {
   const [activeTab, setActiveTab] = useState('chat');
   const [users, setUsers] = useState([]);
   const [videoError, setVideoError] = useState(null);
+  const [audioTracks, setAudioTracks] = useState([]);
+  const [subtitleTracks, setSubtitleTracks] = useState([]);
+  const [selectedAudioTrack, setSelectedAudioTrack] = useState(0);
+  const [selectedSubtitleTrack, setSelectedSubtitleTrack] = useState(-1); // -1 = off
+  const [showTrackMenu, setShowTrackMenu] = useState(false);
 
   const videoRef = useRef(null);
   const youtubePlayerRef = useRef(null);
@@ -855,6 +860,74 @@ function App() {
     }
   };
 
+  // Detect available audio and subtitle tracks when video loads
+  const handleVideoLoaded = () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    // Reset error state
+    setVideoError(null);
+
+    // Detect audio tracks (limited browser support)
+    if (video.audioTracks && video.audioTracks.length > 0) {
+      const tracks = [];
+      for (let i = 0; i < video.audioTracks.length; i++) {
+        const track = video.audioTracks[i];
+        tracks.push({
+          id: i,
+          label: track.label || track.language || `Audio ${i + 1}`,
+          language: track.language
+        });
+      }
+      setAudioTracks(tracks);
+    } else {
+      setAudioTracks([]);
+    }
+
+    // Detect text/subtitle tracks
+    if (video.textTracks && video.textTracks.length > 0) {
+      const tracks = [];
+      for (let i = 0; i < video.textTracks.length; i++) {
+        const track = video.textTracks[i];
+        tracks.push({
+          id: i,
+          label: track.label || track.language || `Subtitle ${i + 1}`,
+          language: track.language,
+          kind: track.kind
+        });
+      }
+      setSubtitleTracks(tracks);
+    } else {
+      setSubtitleTracks([]);
+    }
+
+    // Ask for sync time
+    socket.emit('ask_for_time', { roomId: roomIdRef.current });
+  };
+
+  // Switch audio track
+  const switchAudioTrack = (trackIndex) => {
+    const video = videoRef.current;
+    if (!video || !video.audioTracks) return;
+
+    for (let i = 0; i < video.audioTracks.length; i++) {
+      video.audioTracks[i].enabled = (i === trackIndex);
+    }
+    setSelectedAudioTrack(trackIndex);
+  };
+
+  // Switch subtitle track
+  const switchSubtitleTrack = (trackIndex) => {
+    const video = videoRef.current;
+    if (!video || !video.textTracks) return;
+
+    for (let i = 0; i < video.textTracks.length; i++) {
+      video.textTracks[i].mode = (i === trackIndex) ? 'showing' : 'hidden';
+    }
+    setSelectedSubtitleTrack(trackIndex);
+  };
+
+
   const handleAddVideo = (e) => {
     e.preventDefault();
     if (!videoUrl) return;
@@ -963,10 +1036,7 @@ function App() {
                       style={{ width: '100%', height: '100%', backgroundColor: '#000' }}
                       onPlay={handleVideoPlay}
                       onPause={handleVideoPause}
-                      onLoadedMetadata={() => {
-                        setVideoError(null);
-                        socket.emit('ask_for_time', { roomId: roomIdRef.current });
-                      }}
+                      onLoadedMetadata={handleVideoLoaded}
                       onError={(e) => {
                         console.error('Video load error:', e);
                         const video = e.target;
@@ -975,7 +1045,7 @@ function App() {
                           switch (video.error.code) {
                             case 1: errorMsg = 'Video loading aborted'; break;
                             case 2: errorMsg = 'Network error - check your connection'; break;
-                            case 3: errorMsg = 'Video format not supported'; break;
+                            case 3: errorMsg = 'Video format not supported (try MP4 instead of MKV)'; break;
                             case 4: errorMsg = 'Video not found or access denied'; break;
                             default: errorMsg = 'Unknown video error';
                           }
@@ -986,6 +1056,132 @@ function App() {
                       playsInline
                       webkit-playsinline="true"
                     />
+
+                    {/* Track Selection Button */}
+                    {(audioTracks.length > 1 || subtitleTracks.length > 0) && (
+                      <button
+                        onClick={() => setShowTrackMenu(!showTrackMenu)}
+                        style={{
+                          position: 'absolute',
+                          top: '10px',
+                          right: '10px',
+                          background: 'rgba(0,0,0,0.7)',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '5px',
+                          padding: '8px 12px',
+                          cursor: 'pointer',
+                          fontSize: '0.9rem',
+                          zIndex: 15
+                        }}
+                      >
+                        ⚙️ Tracks
+                      </button>
+                    )}
+
+                    {/* Track Selection Menu */}
+                    {showTrackMenu && (
+                      <div style={{
+                        position: 'absolute',
+                        top: '50px',
+                        right: '10px',
+                        background: 'rgba(0,0,0,0.95)',
+                        color: 'white',
+                        borderRadius: '8px',
+                        padding: '1rem',
+                        minWidth: '200px',
+                        zIndex: 30,
+                        boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                          <strong>Track Settings</strong>
+                          <button
+                            onClick={() => setShowTrackMenu(false)}
+                            style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer' }}
+                          >✕</button>
+                        </div>
+
+                        {/* Audio Tracks */}
+                        {audioTracks.length > 1 && (
+                          <div style={{ marginBottom: '1rem' }}>
+                            <div style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '0.5rem' }}>🔊 Audio Track</div>
+                            {audioTracks.map((track, idx) => (
+                              <button
+                                key={idx}
+                                onClick={() => switchAudioTrack(idx)}
+                                style={{
+                                  display: 'block',
+                                  width: '100%',
+                                  textAlign: 'left',
+                                  background: selectedAudioTrack === idx ? 'rgba(99, 102, 241, 0.5)' : 'rgba(255,255,255,0.1)',
+                                  color: 'white',
+                                  border: 'none',
+                                  padding: '0.5rem',
+                                  marginBottom: '0.25rem',
+                                  borderRadius: '4px',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                {selectedAudioTrack === idx && '✓ '}{track.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Subtitle Tracks */}
+                        {subtitleTracks.length > 0 && (
+                          <div>
+                            <div style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '0.5rem' }}>📝 Subtitles</div>
+                            <button
+                              onClick={() => switchSubtitleTrack(-1)}
+                              style={{
+                                display: 'block',
+                                width: '100%',
+                                textAlign: 'left',
+                                background: selectedSubtitleTrack === -1 ? 'rgba(99, 102, 241, 0.5)' : 'rgba(255,255,255,0.1)',
+                                color: 'white',
+                                border: 'none',
+                                padding: '0.5rem',
+                                marginBottom: '0.25rem',
+                                borderRadius: '4px',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              {selectedSubtitleTrack === -1 && '✓ '}Off
+                            </button>
+                            {subtitleTracks.map((track, idx) => (
+                              <button
+                                key={idx}
+                                onClick={() => switchSubtitleTrack(idx)}
+                                style={{
+                                  display: 'block',
+                                  width: '100%',
+                                  textAlign: 'left',
+                                  background: selectedSubtitleTrack === idx ? 'rgba(99, 102, 241, 0.5)' : 'rgba(255,255,255,0.1)',
+                                  color: 'white',
+                                  border: 'none',
+                                  padding: '0.5rem',
+                                  marginBottom: '0.25rem',
+                                  borderRadius: '4px',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                {selectedSubtitleTrack === idx && '✓ '}{track.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {audioTracks.length <= 1 && subtitleTracks.length === 0 && (
+                          <div style={{ color: '#aaa', fontSize: '0.9rem' }}>
+                            No additional tracks available.
+                            <br /><br />
+                            <small>Note: MKV files with embedded tracks are not supported by browsers. Use MP4 or HLS streams for multiple audio/subtitle tracks.</small>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {videoError && (
                       <div style={{
                         position: 'absolute',
