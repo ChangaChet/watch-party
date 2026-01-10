@@ -812,13 +812,13 @@ function App() {
         // TURN server from ExpressTurn
         {
           urls: 'turn:free.expressturn.com:3478',
-          username: 'efPU52K4SLOQ34W2QY',
-          credential: '1TJPNFxHKXrZfelz'
+          username: '000000002083412741',
+          credential: 'FWnoAz3ExD5wKbQK1u6JxaZD/9E='
         },
         {
           urls: 'turn:free.expressturn.com:3478?transport=tcp',
-          username: 'efPU52K4SLOQ34W2QY',
-          credential: '1TJPNFxHKXrZfelz'
+          username: '000000002083412741',
+          credential: 'FWnoAz3ExD5wKbQK1u6JxaZD/9E='
         }
       ],
       iceCandidatePoolSize: 10
