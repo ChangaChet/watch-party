@@ -809,26 +809,16 @@ function App() {
         { urls: 'stun:stun2.l.google.com:19302' },
         { urls: 'stun:stun3.l.google.com:19302' },
         { urls: 'stun:stun4.l.google.com:19302' },
-        // Free TURN servers from Metered
+        // TURN server from ExpressTurn
         {
-          urls: 'turn:a.relay.metered.ca:80',
-          username: 'e918c18959e4ca5e02b6f882',
-          credential: 'rseLhk/YqIOE+xXx'
+          urls: 'turn:free.expressturn.com:3478',
+          username: 'efPU52K4SLOQ34W2QY',
+          credential: '1TJPNFxHKXrZfelz'
         },
         {
-          urls: 'turn:a.relay.metered.ca:80?transport=tcp',
-          username: 'e918c18959e4ca5e02b6f882',
-          credential: 'rseLhk/YqIOE+xXx'
-        },
-        {
-          urls: 'turn:a.relay.metered.ca:443',
-          username: 'e918c18959e4ca5e02b6f882',
-          credential: 'rseLhk/YqIOE+xXx'
-        },
-        {
-          urls: 'turn:a.relay.metered.ca:443?transport=tcp',
-          username: 'e918c18959e4ca5e02b6f882',
-          credential: 'rseLhk/YqIOE+xXx'
+          urls: 'turn:free.expressturn.com:3478?transport=tcp',
+          username: 'efPU52K4SLOQ34W2QY',
+          credential: '1TJPNFxHKXrZfelz'
         }
       ],
       iceCandidatePoolSize: 10
