@@ -67,6 +67,9 @@ const VideoPlayer = ({ stream, muted = false }) => {
       if (!isEnabled) {
         setHasVideo(false);
         setError('Camera Off');
+        if (audioTracks.length > 0) {
+          attemptPlay();
+        }
       } else if (!isLive) {
         setHasVideo(false);
         setError('Loading...');
