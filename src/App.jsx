@@ -838,17 +838,31 @@ function App() {
       }
     };
 
-    peer.oniceconnectionstatechange = () => {
+    peer.oniceconnectionstatechange = async () => {
       addLog(`ICE connection state with ${targetId}:`, peer.iceConnectionState);
-      // Log when connection fails
-      if (peer.iceConnectionState === 'failed') {
-        console.error('ICE connection failed with', targetId);
-        // Try to restart ICE
-        peer.restartIce();
+
+      if (peer.iceConnectionState === 'failed' || peer.iceConnectionState === 'disconnected') {
+        addLog(`ICE ${peer.iceConnectionState} with`, targetId, '- attempting restart');
+
+        // Simple restart wasn't enough, we need to renegotiate with iceRestart
+        if (isInitiator || !peersRef.current[targetId]?.polite) {
+          try {
+            // Only the impolite peer (or initiator) should trigger the restart to avoid collisions
+            // But in our "perfect negotiation", we usually let the impolite peer handle it.
+            // However, for ICE failures, it's safer if the one who detects it tries to fix it.
+
+            // Create an offer with iceRestart
+            const offer = await peer.createOffer({ iceRestart: true });
+            await peer.setLocalDescription(offer);
+            addLog('Sending ICE restart offer to', targetId);
+            socket.emit('offer', { offer: peer.localDescription, target: targetId, callerId: socket.id });
+          } catch (err) {
+            console.error('Error restarting ICE:', err);
+            addLog('Error restarting ICE:', err.message);
+          }
+        }
       }
-      if (peer.iceConnectionState === 'disconnected') {
-        addLog('ICE disconnected from', targetId, '- may reconnect');
-      }
+
       if (peer.iceConnectionState === 'connected') {
         addLog('Successfully connected to', targetId);
       }
