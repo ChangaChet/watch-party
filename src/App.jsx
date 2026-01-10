@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import Hls from 'hls.js';
 import './App.css';
+import SrtToVttConverter from './SrtToVttConverter';
 
 const SOCKET_URL = import.meta.env.PROD
   ? window.location.origin
@@ -53,13 +54,25 @@ const VideoPlayer = ({ stream, muted = false }) => {
     // Check video track status
     const checkVideo = () => {
       const videoTracks = stream.getVideoTracks();
-      const hasLiveVideo = videoTracks.length > 0 &&
-        videoTracks[0].enabled &&
-        videoTracks[0].readyState === 'live';
-      setHasVideo(hasLiveVideo);
+      if (videoTracks.length === 0) {
+        setHasVideo(false);
+        setError('No Video');
+        return;
+      }
 
-      // If we have video, try to play
-      if (hasLiveVideo) {
+      const track = videoTracks[0];
+      const isEnabled = track.enabled;
+      const isLive = track.readyState === 'live';
+
+      if (!isEnabled) {
+        setHasVideo(false);
+        setError('Camera Off');
+      } else if (!isLive) {
+        setHasVideo(false);
+        setError('Loading...');
+      } else {
+        setHasVideo(true);
+        setError(null);
         attemptPlay();
       }
     };
@@ -180,6 +193,7 @@ function App() {
   const [selectedSubtitleTrack, setSelectedSubtitleTrack] = useState(-1); // -1 = off
   const [showTrackMenu, setShowTrackMenu] = useState(false);
   const [subtitleUrl, setSubtitleUrl] = useState(''); // External VTT subtitle URL
+  const [showConverter, setShowConverter] = useState(false); // SRT to VTT converter modal
 
   const videoRef = useRef(null);
   const youtubePlayerRef = useRef(null);
@@ -834,18 +848,31 @@ function App() {
         console.log('Track unmuted from', targetId, event.track.kind);
       };
 
+      // Ensure we have a stream
+      const remoteStream = event.streams[0] || new MediaStream([event.track]);
+
+      // If we created a new stream because one wasn't provided, make sure to add the track
+      if (!event.streams[0] && !remoteStream.getTrackById(event.track.id)) {
+        remoteStream.addTrack(event.track);
+      }
+
       setRemoteStreams(prev => {
         const existing = prev.find(p => p.id === targetId);
         if (existing) {
           // If stream is different, update it
-          if (existing.stream.id !== event.streams[0].id) {
+          if (existing.stream.id !== remoteStream.id) {
             console.log('Updating stream for', targetId);
-            return prev.map(p => p.id === targetId ? { ...p, stream: event.streams[0] } : p);
+            return prev.map(p => p.id === targetId ? { ...p, stream: remoteStream } : p);
+          }
+          // Even if stream ID is same, we might need to force update if tracks changed?
+          // Usually not needed as MediaStream is mutable, but let's ensure track is present
+          if (!existing.stream.getTrackById(event.track.id)) {
+            existing.stream.addTrack(event.track);
           }
           return prev;
         }
         console.log('Adding new remote stream for', targetId);
-        return [...prev, { id: targetId, stream: event.streams[0] }];
+        return [...prev, { id: targetId, stream: remoteStream }];
       });
     };
 
@@ -1327,7 +1354,20 @@ function App() {
             </div>
             <button type="submit" className="btn btn-primary">Join Room</button>
           </form>
+
+          {/* SRT to VTT Converter Button */}
+          <button
+            className="converter-btn"
+            onClick={() => setShowConverter(true)}
+          >
+            <span>📝</span> SRT to VTT Converter
+          </button>
         </div>
+
+        {/* SRT to VTT Converter Modal */}
+        {showConverter && (
+          <SrtToVttConverter onClose={() => setShowConverter(false)} />
+        )}
       </div>
     );
   }
@@ -1546,8 +1586,59 @@ function App() {
                               Clear Subtitles
                             </button>
                           )}
+
+                          {/* VTT File Upload */}
+                          <div style={{ marginTop: '0.75rem' }}>
+                            <label
+                              style={{
+                                display: 'block',
+                                width: '100%',
+                                padding: '0.5rem',
+                                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.3) 0%, rgba(139, 92, 246, 0.3) 100%)',
+                                border: '1px dashed rgba(99, 102, 241, 0.5)',
+                                borderRadius: '4px',
+                                color: 'white',
+                                cursor: 'pointer',
+                                fontSize: '0.8rem',
+                                textAlign: 'center',
+                                transition: 'all 0.2s ease'
+                              }}
+                              onMouseOver={(e) => e.currentTarget.style.background = 'linear-gradient(135deg, rgba(99, 102, 241, 0.5) 0%, rgba(139, 92, 246, 0.5) 100%)'}
+                              onMouseOut={(e) => e.currentTarget.style.background = 'linear-gradient(135deg, rgba(99, 102, 241, 0.3) 0%, rgba(139, 92, 246, 0.3) 100%)'}
+                            >
+                              📁 Upload VTT File
+                              <input
+                                type="file"
+                                accept=".vtt"
+                                style={{ display: 'none' }}
+                                onChange={(e) => {
+                                  const file = e.target.files[0];
+                                  if (file) {
+                                    // Revoke previous blob URL if exists
+                                    if (subtitleUrl && subtitleUrl.startsWith('blob:')) {
+                                      URL.revokeObjectURL(subtitleUrl);
+                                    }
+                                    // Create blob URL for the uploaded file
+                                    const blobUrl = URL.createObjectURL(file);
+                                    setSubtitleUrl(blobUrl);
+                                    // Force video to reload subtitles
+                                    if (videoRef.current) {
+                                      const video = videoRef.current;
+                                      const currentTime = video.currentTime;
+                                      const wasPlaying = !video.paused;
+                                      video.load();
+                                      video.currentTime = currentTime;
+                                      if (wasPlaying) video.play();
+                                    }
+                                  }
+                                  e.target.value = ''; // Reset input
+                                }}
+                              />
+                            </label>
+                          </div>
+
                           <small style={{ color: '#888', display: 'block', marginTop: '0.5rem' }}>
-                            Note: Subtitle file must be in VTT format and CORS-enabled.
+                            Upload a .vtt file or enter a URL to add subtitles.
                           </small>
                         </div>
                       </div>
