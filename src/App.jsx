@@ -1039,9 +1039,10 @@ function App() {
       // No stream exists - get both video and audio
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode }, audio: true });
-        stream.getAudioTracks().forEach(t => t.enabled = false);
-        setIsMuted(true);
-        socket.emit('toggle_mute', { roomId: roomIdRef.current, isMuted: true });
+        // Enable audio by default
+        stream.getAudioTracks().forEach(t => t.enabled = true);
+        setIsMuted(false);
+        socket.emit('toggle_mute', { roomId: roomIdRef.current, isMuted: false });
         setLocalStream(stream);
         localStreamRef.current = stream;
 
