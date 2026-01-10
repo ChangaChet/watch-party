@@ -194,7 +194,31 @@ function App() {
   const [showTrackMenu, setShowTrackMenu] = useState(false);
   const [subtitleUrl, setSubtitleUrl] = useState(''); // External VTT subtitle URL
   const [showConverter, setShowConverter] = useState(false); // SRT to VTT converter modal
+  const [debugLogs, setDebugLogs] = useState([]);
+  const [showDebug, setShowDebug] = useState(false);
 
+  const addLog = (msg, ...args) => {
+    const timestamp = new Date().toLocaleTimeString();
+    let argsStr = '';
+    try {
+      argsStr = args.map(a => {
+        if (typeof a === 'object') {
+          try {
+            return JSON.stringify(a);
+          } catch (e) {
+            return '[Object]';
+          }
+        }
+        return String(a);
+      }).join(' ');
+    } catch (e) {
+      argsStr = '...';
+    }
+
+    const logLine = `${timestamp}: ${msg} ${argsStr}`;
+    console.log(msg, ...args);
+    setDebugLogs(prev => [...prev.slice(-99), logLine]); // Keep last 100
+  };
   const videoRef = useRef(null);
   const youtubePlayerRef = useRef(null);
   const hlsRef = useRef(null); // HLS.js instance
@@ -219,14 +243,14 @@ function App() {
   // Socket listeners
   useEffect(() => {
     socket.on('connect', () => {
-      console.log('Connected:', socket.id);
+      addLog('Connected:', socket.id);
       if (roomIdRef.current && usernameRef.current) {
         socket.emit('join_room', { roomId: roomIdRef.current, username: usernameRef.current });
       }
     });
 
     socket.on('room_state', (data) => {
-      console.log('Joined room:', data);
+      addLog('Joined room:', data);
       setPlaylist(data.playlist);
       setCurrentIndex(data.currentIndex);
       setIsPlaying(data.isPlaying);
@@ -287,13 +311,13 @@ function App() {
     });
 
     socket.on('user_joined', async ({ username: newUser, users: updatedUsers }) => {
-      console.log(`${newUser} joined`);
+      addLog(`${newUser} joined`);
       if (updatedUsers) setUsers(updatedUsers);
 
       // Initiate WebRTC call to new user
       updatedUsers.forEach((user) => {
         if (user.id !== socket.id && !peersRef.current[user.id]) {
-          console.log('Creating peer connection to', user.id, '(as initiator/impolite)');
+          addLog('Creating peer connection to', user.id, '(as initiator/impolite)');
           const peer = createPeer(user.id, true);
           peersRef.current[user.id] = { peer, polite: false }; // Initiator is impolite
         }
@@ -301,7 +325,7 @@ function App() {
     });
 
     socket.on('user_left', ({ username: leftUser, users: updatedUsers }) => {
-      console.log(`${leftUser} left`);
+      addLog(`${leftUser} left`);
       if (updatedUsers) setUsers(updatedUsers);
 
       const currentIds = updatedUsers.map(u => u.id);
@@ -322,7 +346,7 @@ function App() {
 
     // WebRTC Signaling Listeners
     socket.on('offer', async ({ offer, callerId }) => {
-      console.log('Received offer from', callerId);
+      addLog('Received offer from', callerId);
       let peerObj = peersRef.current[callerId];
       let peer;
 
@@ -341,13 +365,13 @@ function App() {
         ignoringOfferRef.current[callerId] = !polite && offerCollision;
 
         if (ignoringOfferRef.current[callerId]) {
-          console.log('Ignoring offer from', callerId, 'due to collision (we are impolite)');
+          addLog('Ignoring offer from', callerId, 'due to collision (we are impolite)');
           return;
         }
 
         // If we're in the middle of something, rollback
         if (peer.signalingState !== 'stable') {
-          console.log('Rolling back local description for', callerId);
+          addLog('Rolling back local description for', callerId);
           await Promise.all([
             peer.setLocalDescription({ type: 'rollback' }),
             peer.setRemoteDescription(new RTCSessionDescription(offer))
@@ -370,7 +394,7 @@ function App() {
 
         const answer = await peer.createAnswer();
         await peer.setLocalDescription(answer);
-        console.log('Sending answer to', callerId);
+        addLog('Sending answer to', callerId);
         socket.emit('answer', { answer: peer.localDescription, target: callerId, callerId: socket.id });
       } catch (err) {
         console.error('Error handling offer from', callerId, ':', err);
@@ -742,12 +766,12 @@ function App() {
   // Helper to renegotiate a peer connection (send new offer)
   const renegotiatePeer = async (targetId, peer) => {
     if (makingOfferRef.current[targetId]) {
-      console.log('Already making offer to', targetId, '- skipping');
+      addLog('Already making offer to', targetId, '- skipping');
       return;
     }
 
     makingOfferRef.current[targetId] = true;
-    console.log('Starting renegotiation with', targetId);
+    addLog('Starting renegotiation with', targetId);
 
     try {
       const offer = await peer.createOffer({
@@ -758,12 +782,12 @@ function App() {
 
       // Check if the signaling state is still valid
       if (peer.signalingState !== 'stable' && peer.signalingState !== 'have-local-offer') {
-        console.log('Signaling state not ready:', peer.signalingState, '- skipping offer');
+        addLog('Signaling state not ready:', peer.signalingState, '- skipping offer');
         return;
       }
 
       await peer.setLocalDescription(offer);
-      console.log('Sending offer to', targetId);
+      addLog('Sending offer to', targetId);
       socket.emit('offer', { offer: peer.localDescription, target: targetId, callerId: socket.id });
     } catch (err) {
       console.error('Error renegotiating with', targetId, ':', err);
@@ -809,13 +833,13 @@ function App() {
 
     peer.onicecandidate = (event) => {
       if (event.candidate) {
-        console.log('Sending ICE candidate to', targetId);
+        addLog('Sending ICE candidate to', targetId);
         socket.emit('ice-candidate', { candidate: event.candidate, target: targetId, callerId: socket.id });
       }
     };
 
     peer.oniceconnectionstatechange = () => {
-      console.log(`ICE connection state with ${targetId}:`, peer.iceConnectionState);
+      addLog(`ICE connection state with ${targetId}:`, peer.iceConnectionState);
       // Log when connection fails
       if (peer.iceConnectionState === 'failed') {
         console.error('ICE connection failed with', targetId);
@@ -823,29 +847,29 @@ function App() {
         peer.restartIce();
       }
       if (peer.iceConnectionState === 'disconnected') {
-        console.warn('ICE disconnected from', targetId, '- may reconnect');
+        addLog('ICE disconnected from', targetId, '- may reconnect');
       }
       if (peer.iceConnectionState === 'connected') {
-        console.log('Successfully connected to', targetId);
+        addLog('Successfully connected to', targetId);
       }
     };
 
     peer.onconnectionstatechange = () => {
-      console.log(`Connection state with ${targetId}:`, peer.connectionState);
+      addLog(`Connection state with ${targetId}:`, peer.connectionState);
     };
 
     // Enable negotiation for ALL peers - when tracks are added, trigger renegotiation
     peer.onnegotiationneeded = async () => {
-      console.log('Negotiation needed with', targetId, '(isInitiator:', isInitiator, ')');
+      addLog('Negotiation needed with', targetId, '(isInitiator:', isInitiator, ')');
       await renegotiatePeer(targetId, peer);
     };
 
     peer.ontrack = (event) => {
-      console.log('Received track from', targetId, '- kind:', event.track.kind, '- readyState:', event.track.readyState);
+      addLog('Received track from', targetId, '- kind:', event.track.kind, '- readyState:', event.track.readyState);
 
       // Listen for track becoming live
       event.track.onunmute = () => {
-        console.log('Track unmuted from', targetId, event.track.kind);
+        addLog('Track unmuted from', targetId, event.track.kind);
       };
 
       // Ensure we have a stream
@@ -2027,6 +2051,45 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Debug Log Overlay */}
+      {showDebug && (
+        <div style={{
+          position: 'fixed',
+          bottom: '20px',
+          right: '340px', // Left of sidebar
+          width: '400px',
+          height: '300px',
+          background: 'rgba(0,0,0,0.85)',
+          border: '1px solid rgba(255,255,255,0.2)',
+          borderRadius: '8px',
+          padding: '10px',
+          zIndex: 9999,
+          display: 'flex',
+          flexDirection: 'column',
+          fontSize: '0.75rem',
+          color: '#0f0',
+          fontFamily: 'monospace'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px', borderBottom: '1px solid #333' }}>
+            <span>Debug Log ({debugLogs.length})</span>
+            <button onClick={() => setDebugLogs([])} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer' }}>Clear</button>
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column-reverse' }}>
+            {debugLogs.map((log, i) => (
+              <div key={i} style={{ padding: '2px 0', borderBottom: '1px solid #222' }}>{log}</div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Debug Toggle Button (Hidden in plain sight, e.g., double click logo or specific key) */}
+      <button
+        style={{ position: 'fixed', bottom: '10px', left: '10px', opacity: 0.3, zIndex: 10000, fontSize: '0.7rem' }}
+        onClick={() => setShowDebug(!showDebug)}
+      >
+        {showDebug ? 'Hide Debug' : 'Show Debug'}
+      </button>
     </div>
   );
 }
