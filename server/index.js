@@ -71,12 +71,12 @@ app.get('/api/proxy-video', async (req, res) => {
 
       // 3. Spawn FFmpeg Process
       const ffmpegArgs = [
-        '-re', // Read input at native frame rate (optional, but good for streaming stable)
         '-i', 'pipe:0', // Input from Stdin
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
         '-tune', 'zerolatency',
         '-profile:v', 'main',
+        '-pix_fmt', 'yuv420p', // Force 8-bit color output (Fixes black screen/compatibility)
         '-c:a', 'aac',
         '-ar', '44100',
         '-ac', '2',
@@ -95,10 +95,10 @@ app.get('/api/proxy-video', async (req, res) => {
 
       // 6. Error Handling & logging
       ffmpegProcess.stderr.on('data', (data) => {
-        // Log only critical errors or first few lines to avoid spam
         const msg = data.toString();
-        if (msg.includes('Error') || msg.includes('Invalid')) {
-          console.error('FFmpeg Log:', msg);
+        // Console log mostly errors or startup
+        if (msg.includes('Error') || msg.includes('Invalid') || msg.includes('Stream #')) {
+          console.log('FFmpeg:', msg.substring(0, 200));
         }
       });
 
@@ -138,7 +138,7 @@ app.options('/api/proxy-video', (req, res) => {
   res.status(204).send();
 });
 
-// Socket Logic ... (Remaining Socket Code)
+// Socket Logic ...
 const rooms = new Map();
 io.on('connection', (socket) => {
   socket.on('join_room', ({ roomId, username }) => {
@@ -159,7 +159,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Re-implement basic socket handlers for brevity in this response, normally I would keep them all
   socket.on('add_to_playlist', ({ roomId, videoUrl }) => {
     const room = rooms.get(roomId);
     if (room) { room.playlist.push(videoUrl); io.to(roomId).emit('playlist_updated', { playlist: room.playlist }); }
@@ -203,6 +202,35 @@ io.on('connection', (socket) => {
       }
     });
   });
+  socket.on('kick_user', ({ roomId, targetId }) => {
+    const room = rooms.get(roomId);
+    if (room && room.adminId === socket.id) {
+      io.to(targetId).emit('kicked');
+      const userIndex = room.users.findIndex(u => u.id === targetId);
+      if (userIndex !== -1) {
+        const kickedUser = room.users[userIndex];
+        room.users.splice(userIndex, 1);
+        io.to(roomId).emit('user_left', { username: kickedUser.username, users: room.users });
+        const targetSocket = io.sockets.sockets.get(targetId);
+        if (targetSocket) targetSocket.leave(roomId);
+      }
+    }
+  });
+  // Missing handlers added back
+  socket.on('remove_from_playlist', ({ roomId, index }) => {
+    const room = rooms.get(roomId);
+    if (room) {
+      room.playlist.splice(index, 1);
+      io.to(roomId).emit('playlist_updated', { playlist: room.playlist });
+    }
+  });
+  socket.on('toggle_mute', ({ roomId, isMuted }) => socket.to(roomId).emit('user_muted', { userId: socket.id, isMuted }));
+  socket.on('speaking_status', ({ roomId, isSpeaking }) => socket.to(roomId).emit('user_speaking', { userId: socket.id, isSpeaking }));
+  socket.on('toggle_permissions', ({ roomId }) => {
+    const room = rooms.get(roomId);
+    if (room && room.adminId === socket.id) { room.permissions = room.permissions === 'open' ? 'restricted' : 'open'; io.to(roomId).emit('permissions_updated', { permissions: room.permissions }); }
+  });
+  socket.on('send_reaction', ({ roomId, emoji }) => io.to(roomId).emit('reaction_received', { emoji, userId: socket.id }));
 });
 
 const PORT = 3001;
