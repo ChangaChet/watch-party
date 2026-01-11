@@ -45,7 +45,7 @@ app.get('/api/proxy-video', async (req, res) => {
 
   try {
     if (isMkv) {
-      console.log('Remuxing MKV stream via FFmpeg (Direct):', videoUrl);
+      console.log('Transcoding MKV stream via FFmpeg (Direct):', videoUrl);
 
       const ffmpeg = (await import('fluent-ffmpeg')).default;
 
@@ -53,8 +53,7 @@ app.get('/api/proxy-video', async (req, res) => {
       res.set('Access-Control-Allow-Origin', '*');
       res.set('Content-Type', 'video/mp4');
 
-      // Spawn FFmpeg - Direct URL input (proven to work in tests)
-      // Use COPY for speed, but fallback to transcode if needed
+      // Spawn FFmpeg - Direct URL input with Transcoding to H.264
       const command = ffmpeg(videoUrl)
         .inputOptions([
           '-headers', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -63,9 +62,12 @@ app.get('/api/proxy-video', async (req, res) => {
           '-reconnect_delay_max', '5'
         ])
         .outputOptions([
-          '-c:v copy', // Fast copy (remux)
-          '-c:a aac',  // Audio to AAC for safety
-          '-movflags frag_keyframe+empty_moov+default_base_moof', // Browser streaming flags
+          '-c:v libx264',        // Transcode to standard H.264
+          '-preset ultrafast',   // Minimize delay
+          '-tune zerolatency',   // Further minimize delay for streaming
+          '-profile:v main',     // Ensure compatibility with all players
+          '-c:a aac',            // Audio to AAC
+          '-movflags frag_keyframe+empty_moov+default_base_moof', // Essential for fMP4 streaming
           '-f mp4'
         ])
         .on('start', (cmdLine) => console.log('FFmpeg started:', cmdLine))
