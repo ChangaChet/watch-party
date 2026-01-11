@@ -13,7 +13,7 @@ const server = createServer(app);
 const io = new Server(server, {
   cors: {
     origin: process.env.NODE_ENV === 'production'
-      ? true  // Allow all origins in production (same domain)
+      ? true
       : ["http://localhost:5173", "http://localhost:3000"],
     methods: ["GET", "POST"],
     credentials: true
@@ -46,7 +46,7 @@ app.get('/api/proxy-video', async (req, res) => {
 
   try {
     if (isMkv) {
-      console.log('Remuxing MKV stream via FFmpeg:', videoUrl);
+      console.log('Starting FFmpeg transcoding for:', videoUrl);
 
       // Dynamic import
       const ffmpeg = (await import('fluent-ffmpeg')).default;
@@ -55,14 +55,18 @@ app.get('/api/proxy-video', async (req, res) => {
       // Fetch the source stream first (avoids FFmpeg HTTPS/protocol issues)
       const sourceResponse = await fetch(videoUrl, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Referer': new URL(videoUrl).origin
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          // Removed Referer to avoid potential blocking
         }
       });
 
       if (!sourceResponse.ok) {
-        throw new Error(`Source fetch failed: ${sourceResponse.status} ${sourceResponse.statusText}`);
+        const errText = await sourceResponse.text();
+        throw new Error(`Source fetch failed: ${sourceResponse.status} ${sourceResponse.statusText} - ${errText.substring(0, 100)}`);
       }
+
+      const contentType = sourceResponse.headers.get('content-type');
+      console.log(`Upstream Content-Type: ${contentType}`);
 
       // Set headers for MP4 stream
       res.set('Access-Control-Allow-Origin', '*');
@@ -78,6 +82,8 @@ app.get('/api/proxy-video', async (req, res) => {
           '-movflags frag_keyframe+empty_moov+default_base_moof',
           '-f mp4'
         ])
+        .on('start', (cmdLine) => console.log('FFmpeg started:', cmdLine))
+        .on('codecData', (data) => console.log('FFmpeg codec data:', data))
         .on('error', (err) => {
           if (!err.message.includes('Output stream closed')) {
             console.error('FFmpeg error:', err.message);
@@ -117,6 +123,7 @@ app.get('/api/proxy-video', async (req, res) => {
   } catch (error) {
     console.error('Proxy error:', error.message);
     if (!res.headersSent) {
+      // Return 500 but also try to give detailed JSON error
       res.status(500).json({ error: 'Failed to fetch video', details: error.message });
     }
   }
