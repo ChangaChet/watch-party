@@ -31,8 +31,68 @@ app.use(express.json());
 // Serve static files from the React app in production
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '../dist')));
+}
 
-  // Handle React routing, return all requests to React app
+// Video proxy endpoint - bypasses CORS for external video sources like Real-Debrid
+app.get('/api/proxy-video', async (req, res) => {
+  const videoUrl = req.query.url;
+
+  if (!videoUrl) {
+    return res.status(400).json({ error: 'Missing url parameter' });
+  }
+
+  try {
+    // Dynamically import node-fetch for streaming
+    const fetch = (await import('node-fetch')).default;
+
+    // Forward the request to the external video URL
+    const response = await fetch(videoUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Range': req.headers.range || '',
+        'Referer': new URL(videoUrl).origin
+      }
+    });
+
+    // Set CORS headers to allow browser access
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Range');
+    res.set('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
+
+    // Forward response headers
+    res.status(response.status);
+    if (response.headers.get('content-type')) {
+      res.set('Content-Type', response.headers.get('content-type'));
+    }
+    if (response.headers.get('content-length')) {
+      res.set('Content-Length', response.headers.get('content-length'));
+    }
+    if (response.headers.get('content-range')) {
+      res.set('Content-Range', response.headers.get('content-range'));
+    }
+    if (response.headers.get('accept-ranges')) {
+      res.set('Accept-Ranges', response.headers.get('accept-ranges'));
+    }
+
+    // Pipe the video stream to the response
+    response.body.pipe(res);
+  } catch (error) {
+    console.error('Proxy error:', error.message);
+    res.status(500).json({ error: 'Failed to fetch video', details: error.message });
+  }
+});
+
+// Handle OPTIONS for CORS preflight
+app.options('/api/proxy-video', (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Range');
+  res.status(204).send();
+});
+
+// Handle React routing in production (must be after API routes)
+if (process.env.NODE_ENV === 'production') {
   app.use((req, res) => {
     res.sendFile(path.join(__dirname, '../dist/index.html'));
   });
