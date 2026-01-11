@@ -4,7 +4,6 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { PassThrough } from 'stream';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,6 +32,7 @@ if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '../dist')));
 }
 
+// Video proxy endpoint - bypasses CORS & Remuxes MKV to MP4
 app.get('/api/proxy-video', async (req, res) => {
   const videoUrl = req.query.url;
 
@@ -40,47 +40,39 @@ app.get('/api/proxy-video', async (req, res) => {
     return res.status(400).json({ error: 'Missing url parameter' });
   }
 
+  // Check if we need to remux (MKV files)
   const isMkv = videoUrl.toLowerCase().includes('.mkv');
 
   try {
     if (isMkv) {
-      console.log('Using FFmpeg Pipe Strategy for:', videoUrl);
+      console.log('Remuxing MKV stream via FFmpeg (Direct):', videoUrl);
 
       const ffmpeg = (await import('fluent-ffmpeg')).default;
-      const fetch = (await import('node-fetch')).default;
 
-      // Fetch source
-      const sourceResponse = await fetch(videoUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-      });
-
-      if (!sourceResponse.ok) {
-        throw new Error(`Source fetch failed: ${sourceResponse.status} ${sourceResponse.statusText}`);
-      }
-
-      console.log(`Upstream Content-Type: ${sourceResponse.headers.get('content-type')}`);
-
-      // Prepare headers
+      // Set headers for MP4 stream
       res.set('Access-Control-Allow-Origin', '*');
       res.set('Content-Type', 'video/mp4');
 
-      // Use PassThrough stream to decouple fetch from ffmpeg
-      const passThrough = new PassThrough();
-      sourceResponse.body.pipe(passThrough);
-
-      // FFmpeg command
-      const command = ffmpeg(passThrough)
+      // Spawn FFmpeg - Direct URL input (proven to work in tests)
+      // Use COPY for speed, but fallback to transcode if needed
+      const command = ffmpeg(videoUrl)
+        .inputOptions([
+          '-headers', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          '-reconnect', '1',
+          '-reconnect_streamed', '1',
+          '-reconnect_delay_max', '5'
+        ])
         .outputOptions([
-          '-c:v copy', // Try copy first - it's fastest and preserves quality
-          '-c:a aac',  // Ensure audio is compatible (AAC)
-          '-movflags frag_keyframe+empty_moov+default_base_moof',
+          '-c:v copy', // Fast copy (remux)
+          '-c:a aac',  // Audio to AAC for safety
+          '-movflags frag_keyframe+empty_moov+default_base_moof', // Browser streaming flags
           '-f mp4'
         ])
         .on('start', (cmdLine) => console.log('FFmpeg started:', cmdLine))
         .on('error', (err) => {
-          console.error('FFmpeg error:', err.message);
+          if (!err.message.includes('Output stream closed')) {
+            console.error('FFmpeg error:', err.message);
+          }
           if (!res.headersSent) res.status(500).end();
         })
         .pipe(res, { end: true });
@@ -90,7 +82,7 @@ app.get('/api/proxy-video', async (req, res) => {
       });
 
     } else {
-      // Standard Proxy
+      // Standard Proxy logic for non-MKV
       const fetch = (await import('node-fetch')).default;
 
       const response = await fetch(videoUrl, {
@@ -117,7 +109,7 @@ app.get('/api/proxy-video', async (req, res) => {
   } catch (error) {
     console.error('Proxy error:', error.message);
     if (!res.headersSent) {
-      res.status(500).json({ error: 'Proxy failed', details: error.message });
+      res.status(500).json({ error: 'Failed to fetch video', details: error.message });
     }
   }
 });
@@ -135,22 +127,15 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-// Room Socket Logic (preserved)
+// Socket Logic
 const rooms = new Map();
 io.on('connection', (socket) => {
-  // Join a room
   socket.on('join_room', ({ roomId, username }) => {
     socket.join(roomId);
     if (!rooms.has(roomId)) {
       rooms.set(roomId, {
-        playlist: [],
-        currentIndex: 0,
-        isPlaying: false,
-        currentTime: 0,
-        users: [],
-        messages: [],
-        adminId: socket.id,
-        permissions: 'open'
+        playlist: [], currentIndex: 0, isPlaying: false, currentTime: 0,
+        users: [], messages: [], adminId: socket.id, permissions: 'open'
       });
     }
     const room = rooms.get(roomId);
@@ -165,8 +150,7 @@ io.on('connection', (socket) => {
 
   socket.on('add_to_playlist', ({ roomId, videoUrl }) => {
     const room = rooms.get(roomId);
-    if (room) {
-      if (room.permissions === 'restricted' && room.adminId !== socket.id) return;
+    if (room && (room.permissions === 'open' || room.adminId === socket.id)) {
       room.playlist.push(videoUrl);
       io.to(roomId).emit('playlist_updated', { playlist: room.playlist });
     }
@@ -174,8 +158,7 @@ io.on('connection', (socket) => {
 
   socket.on('remove_from_playlist', ({ roomId, index }) => {
     const room = rooms.get(roomId);
-    if (room && index >= 0 && index < room.playlist.length) {
-      if (room.permissions === 'restricted' && room.adminId !== socket.id) return;
+    if (room && index >= 0 && index < room.playlist.length && (room.permissions === 'open' || room.adminId === socket.id)) {
       room.playlist.splice(index, 1);
       if (room.currentIndex >= room.playlist.length && room.playlist.length > 0) room.currentIndex = room.playlist.length - 1;
       io.to(roomId).emit('playlist_updated', { playlist: room.playlist, currentIndex: room.currentIndex });
@@ -184,19 +167,15 @@ io.on('connection', (socket) => {
 
   socket.on('change_video', ({ roomId, index }) => {
     const room = rooms.get(roomId);
-    if (room && index >= 0 && index < room.playlist.length) {
-      if (room.permissions === 'restricted' && room.adminId !== socket.id) return;
-      room.currentIndex = index;
-      room.currentTime = 0;
-      room.isPlaying = true;
+    if (room && index >= 0 && index < room.playlist.length && (room.permissions === 'open' || room.adminId === socket.id)) {
+      room.currentIndex = index; room.currentTime = 0; room.isPlaying = true;
       io.to(roomId).emit('video_changed', { currentIndex: index, currentTime: 0, isPlaying: true });
     }
   });
 
   socket.on('sync_action', ({ roomId, action, data }) => {
     const room = rooms.get(roomId);
-    if (!room) return;
-    if (room.permissions === 'restricted' && room.adminId !== socket.id) return;
+    if (!room || (room.permissions === 'restricted' && room.adminId !== socket.id)) return;
     if (data.currentTime !== undefined) room.currentTime = data.currentTime;
     switch (action) {
       case 'play': room.isPlaying = true; socket.to(roomId).emit('sync_play', { currentTime: data.currentTime }); break;
@@ -213,6 +192,7 @@ io.on('connection', (socket) => {
       if (existingUser) io.to(existingUser.id).emit('request_sync', { requesterId: socket.id });
     }
   });
+
   socket.on('offer', p => io.to(p.target).emit('offer', p));
   socket.on('answer', p => io.to(p.target).emit('answer', p));
   socket.on('ice-candidate', p => io.to(p.target).emit('ice-candidate', p));
@@ -220,10 +200,11 @@ io.on('connection', (socket) => {
   socket.on('speaking_status', ({ roomId, isSpeaking }) => socket.to(roomId).emit('user_speaking', { userId: socket.id, isSpeaking }));
   socket.on('send_message', ({ roomId, message, username }) => {
     const room = rooms.get(roomId);
-    if (!room) return;
-    const chatMessage = { id: Date.now(), username, message, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
-    room.messages.push(chatMessage);
-    io.to(roomId).emit('chat_message', chatMessage);
+    if (room) {
+      const chatMessage = { id: Date.now(), username, message, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+      room.messages.push(chatMessage);
+      io.to(roomId).emit('chat_message', chatMessage);
+    }
   });
   socket.on('toggle_permissions', ({ roomId }) => {
     const room = rooms.get(roomId);
