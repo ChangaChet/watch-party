@@ -3,7 +3,8 @@ import io from 'socket.io-client';
 import Hls from 'hls.js';
 import './App.css';
 import './VideoJsTheme.css';
-import SrtToVttConverter from './SrtToVttConverter';
+import JSZip from 'jszip';
+import SrtToVttConverter, { convertSrtToVtt } from './SrtToVttConverter';
 import SubtitleOverlay from './SubtitleOverlay';
 import VideoJsPlayer from './VideoJsPlayer';
 
@@ -1800,22 +1801,51 @@ function App() {
                           transition: 'all 0.2s ease'
                         }}
                       >
-                        {subtitleContent ? `✓ ${subtitleFileName}` : '📁 Upload SRT or VTT File'}
+                        {subtitleContent ? `✓ ${subtitleFileName}` : '📁 Upload SRT, VTT or ZIP File'}
                         <input
                           type="file"
-                          accept=".srt,.vtt"
+                          accept=".srt,.vtt,.zip"
                           style={{ display: 'none' }}
-                          onChange={(e) => {
+                          onChange={async (e) => {
                             const file = e.target.files[0];
-                            if (file) {
-                              const reader = new FileReader();
-                              reader.onload = (event) => {
-                                setSubtitleContent(event.target.result);
-                                setSubtitleFileName(file.name);
-                                setSubtitleEnabled(true);
-                                setSubtitleDelay(0); // Reset delay when loading new file
-                              };
-                              reader.readAsText(file);
+                            if (!file) return;
+
+                            try {
+                              let content = '';
+                              let fileName = file.name;
+
+                              if (file.name.toLowerCase().endsWith('.zip')) {
+                                const zip = new JSZip();
+                                const loadedZip = await zip.loadAsync(file);
+                                // Find first .srt or .vtt file
+                                const subtitleEntry = Object.values(loadedZip.files).find(f =>
+                                  !f.dir && (f.name.toLowerCase().endsWith('.srt') || f.name.toLowerCase().endsWith('.vtt'))
+                                );
+
+                                if (subtitleEntry) {
+                                  fileName = subtitleEntry.name;
+                                  content = await subtitleEntry.async('string');
+                                } else {
+                                  alert('No subtitle file (.srt or .vtt) found in the ZIP archive.');
+                                  return;
+                                }
+                              } else {
+                                content = await file.text();
+                              }
+
+                              // Auto-convert SRT to VTT
+                              if (fileName.toLowerCase().endsWith('.srt')) {
+                                content = convertSrtToVtt(content);
+                                fileName = fileName.replace(/\.srt$/i, '.vtt');
+                              }
+
+                              setSubtitleContent(content);
+                              setSubtitleFileName(fileName);
+                              setSubtitleEnabled(true);
+                              setSubtitleDelay(0);
+                            } catch (err) {
+                              console.error("Error processing subtitle file:", err);
+                              alert("Failed to process subtitle file.");
                             }
                             e.target.value = '';
                           }}

@@ -6,7 +6,12 @@ import JSZip from 'jszip';
  * @param {string} srtContent - The SRT file content
  * @returns {string} - The converted VTT content
  */
-const convertSrtToVtt = (srtContent) => {
+/**
+ * Converts SRT subtitle format to VTT format
+ * @param {string} srtContent - The SRT file content
+ * @returns {string} - The converted VTT content
+ */
+export const convertSrtToVtt = (srtContent) => {
     // Start VTT file with required header
     let vttContent = 'WEBVTT\n\n';
 
