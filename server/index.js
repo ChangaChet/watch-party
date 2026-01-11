@@ -50,13 +50,26 @@ app.get('/api/proxy-video', async (req, res) => {
 
       // Dynamic import
       const ffmpeg = (await import('fluent-ffmpeg')).default;
+      const fetch = (await import('node-fetch')).default;
+
+      // Fetch the source stream first (avoids FFmpeg HTTPS/protocol issues)
+      const sourceResponse = await fetch(videoUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': new URL(videoUrl).origin
+        }
+      });
+
+      if (!sourceResponse.ok) {
+        throw new Error(`Source fetch failed: ${sourceResponse.status} ${sourceResponse.statusText}`);
+      }
 
       // Set headers for MP4 stream
       res.set('Access-Control-Allow-Origin', '*');
       res.set('Content-Type', 'video/mp4');
 
       // Spawn FFmpeg to remux/transcode to fragmented MP4
-      const command = ffmpeg(videoUrl)
+      const command = ffmpeg(sourceResponse.body)
         .outputOptions([
           '-c:v libx264',
           '-preset ultrafast',
