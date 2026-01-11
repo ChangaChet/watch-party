@@ -149,14 +149,37 @@ const SubtitleOverlay = ({
             return;
         }
 
-        const video = videoRef.current;
+        const player = videoRef.current;
+
+        // Check if player is disposed (Video.js)
+        if (typeof player.isDisposed === 'function' && player.isDisposed()) {
+            return;
+        }
 
         const updateSubtitle = () => {
-            const currentTime = video.currentTime + (delay / 1000); // delay is in ms
+            // Get current time - handle both Video.js and native video element
+            let currentTime;
+            try {
+                if (typeof player.currentTime === 'function') {
+                    // Video.js player
+                    currentTime = player.currentTime();
+                } else {
+                    // Native video element
+                    currentTime = player.currentTime;
+                }
+            } catch (e) {
+                // Player might be disposed
+                return;
+            }
+
+            if (currentTime === undefined || currentTime === null) return;
+
+            // Apply delay (in ms, convert to seconds)
+            const adjustedTime = currentTime + (delay / 1000);
 
             // Find the current cue
             const cue = parsedCues.find(
-                c => currentTime >= c.startTime && currentTime <= c.endTime
+                c => adjustedTime >= c.startTime && adjustedTime <= c.endTime
             );
 
             setCurrentSubtitle(cue ? cue.text : '');

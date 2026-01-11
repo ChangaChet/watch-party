@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import Hls from 'hls.js';
 import './App.css';
+import './VideoJsTheme.css';
 import SrtToVttConverter from './SrtToVttConverter';
 import SubtitleOverlay from './SubtitleOverlay';
+import VideoJsPlayer from './VideoJsPlayer';
 
 const SOCKET_URL = import.meta.env.PROD
   ? window.location.origin
@@ -233,6 +235,7 @@ function App() {
   };
   const videoRef = useRef(null);
   const youtubePlayerRef = useRef(null);
+  const videojsPlayerRef = useRef(null); // Video.js player instance
   const hlsRef = useRef(null); // HLS.js instance
   const messagesEndRef = useRef(null);
   const roomIdRef = useRef('');
@@ -241,6 +244,7 @@ function App() {
   const currentVideoIdRef = useRef(null); // Track current YouTube video ID
   const isPlayingRef = useRef(false); // Track playing state for refs
   const isYouTubeRef = useRef(false); // Track YouTube state for refs
+  const [useVideoJs, setUseVideoJs] = useState(true); // Toggle between Video.js and native player
 
   const currentVideoUrl = playlist[currentIndex];
   const isYouTube = currentVideoUrl && (currentVideoUrl.includes('youtube.com') || currentVideoUrl.includes('youtu.be'));
@@ -464,7 +468,17 @@ function App() {
     });
 
     socket.on('sync_play', ({ currentTime }) => {
-      const timeDiff = Math.abs((youtubePlayerRef.current ? youtubePlayerRef.current.getCurrentTime() : videoRef.current ? videoRef.current.currentTime : 0) - currentTime);
+      // Get current time from whichever player is active
+      let playerTime = 0;
+      if (isYouTubeRef.current && youtubePlayerRef.current) {
+        playerTime = youtubePlayerRef.current.getCurrentTime();
+      } else if (videojsPlayerRef.current && !videojsPlayerRef.current.isDisposed?.()) {
+        playerTime = videojsPlayerRef.current.currentTime();
+      } else if (videoRef.current) {
+        playerTime = videoRef.current.currentTime;
+      }
+
+      const timeDiff = Math.abs(playerTime - currentTime);
 
       if (isPlayingRef.current && timeDiff < 2) {
         return; // Already playing and synced, ignore
@@ -477,6 +491,9 @@ function App() {
       if (isYouTubeRef.current && youtubePlayerRef.current) {
         if (timeDiff >= 2) youtubePlayerRef.current.seekTo(currentTime, true);
         youtubePlayerRef.current.playVideo();
+      } else if (videojsPlayerRef.current && !videojsPlayerRef.current.isDisposed?.()) {
+        if (timeDiff >= 2) videojsPlayerRef.current.currentTime(currentTime);
+        videojsPlayerRef.current.play();
       } else if (videoRef.current) {
         if (timeDiff >= 2) videoRef.current.currentTime = currentTime;
         videoRef.current.play();
@@ -485,7 +502,17 @@ function App() {
     });
 
     socket.on('sync_pause', ({ currentTime }) => {
-      const timeDiff = Math.abs((youtubePlayerRef.current ? youtubePlayerRef.current.getCurrentTime() : videoRef.current ? videoRef.current.currentTime : 0) - currentTime);
+      // Get current time from whichever player is active
+      let playerTime = 0;
+      if (isYouTubeRef.current && youtubePlayerRef.current) {
+        playerTime = youtubePlayerRef.current.getCurrentTime();
+      } else if (videojsPlayerRef.current && !videojsPlayerRef.current.isDisposed?.()) {
+        playerTime = videojsPlayerRef.current.currentTime();
+      } else if (videoRef.current) {
+        playerTime = videoRef.current.currentTime;
+      }
+
+      const timeDiff = Math.abs(playerTime - currentTime);
 
       if (!isPlayingRef.current && timeDiff < 2) {
         return; // Already paused and synced, ignore
@@ -498,6 +525,9 @@ function App() {
       if (isYouTubeRef.current && youtubePlayerRef.current) {
         youtubePlayerRef.current.seekTo(currentTime, true);
         youtubePlayerRef.current.pauseVideo();
+      } else if (videojsPlayerRef.current && !videojsPlayerRef.current.isDisposed?.()) {
+        videojsPlayerRef.current.currentTime(currentTime);
+        videojsPlayerRef.current.pause();
       } else if (videoRef.current) {
         videoRef.current.currentTime = currentTime;
         videoRef.current.pause();
@@ -513,6 +543,13 @@ function App() {
           youtubePlayerRef.current.playVideo();
         } else if (shouldPlay === false) {
           youtubePlayerRef.current.pauseVideo();
+        }
+      } else if (videojsPlayerRef.current && !videojsPlayerRef.current.isDisposed?.()) {
+        videojsPlayerRef.current.currentTime(currentTime);
+        if (shouldPlay) {
+          videojsPlayerRef.current.play();
+        } else if (shouldPlay === false) {
+          videojsPlayerRef.current.pause();
         }
       } else if (videoRef.current) {
         videoRef.current.currentTime = currentTime;
@@ -534,6 +571,8 @@ function App() {
       let currentTime = 0;
       if (isYouTubeRef.current && youtubePlayerRef.current) {
         currentTime = youtubePlayerRef.current.getCurrentTime();
+      } else if (videojsPlayerRef.current && !videojsPlayerRef.current.isDisposed?.()) {
+        currentTime = videojsPlayerRef.current.currentTime();
       } else if (videoRef.current) {
         currentTime = videoRef.current.currentTime;
       }
@@ -1472,8 +1511,60 @@ function App() {
               <div className="player-container">
                 {isYouTube ? (
                   <div id="youtube-player" style={{ width: '100%', height: '100%' }}></div>
+                ) : useVideoJs ? (
+                  <>
+                    {/* Video.js Player */}
+                    <VideoJsPlayer
+                      src={currentVideoUrl}
+                      isHLS={isHLS}
+                      playerRef={videojsPlayerRef}
+                      isSyncing={isSyncingRef.current}
+                      subtitleUrl={subtitleUrl}
+                      onPlay={(currentTime) => {
+                        if (!isSyncingRef.current) {
+                          setIsPlaying(true);
+                          socket.emit('sync_action', { roomId: roomIdRef.current, action: 'play', data: { currentTime } });
+                        }
+                      }}
+                      onPause={(currentTime) => {
+                        if (!isSyncingRef.current) {
+                          setIsPlaying(false);
+                          socket.emit('sync_action', { roomId: roomIdRef.current, action: 'pause', data: { currentTime } });
+                        }
+                      }}
+                      onSeeked={(currentTime) => {
+                        if (!isSyncingRef.current) {
+                          socket.emit('sync_action', { roomId: roomIdRef.current, action: 'seek', data: { currentTime, isPlaying: isPlayingRef.current } });
+                        }
+                      }}
+                      onReady={(player) => {
+                        console.log('Video.js player ready');
+                        setVideoError(null);
+                        // Ask for sync time
+                        socket.emit('ask_for_time', { roomId: roomIdRef.current });
+                      }}
+                      onError={(error) => {
+                        console.error('Video.js error:', error);
+                        let errorMsg = 'Failed to load video';
+                        if (error?.code === 4) {
+                          errorMsg = 'Video format not supported. Try a different source.';
+                        }
+                        setVideoError(errorMsg);
+                      }}
+                    />
+
+                    {/* Subtitle Overlay - Renders SRT/VTT subtitles with delay adjustment */}
+                    <SubtitleOverlay
+                      videoRef={videojsPlayerRef}
+                      subtitleContent={subtitleContent}
+                      delay={subtitleDelay}
+                      fontSize={subtitleFontSize}
+                      enabled={subtitleEnabled}
+                    />
+                  </>
                 ) : (
                   <>
+                    {/* Native Video Player (Fallback) */}
                     <video
                       ref={videoRef}
                       src={isHLS ? undefined : currentVideoUrl}
@@ -1520,418 +1611,458 @@ function App() {
                       fontSize={subtitleFontSize}
                       enabled={subtitleEnabled}
                     />
+                  </>
+                )}
 
-                    {/* Subtitle Delay Notification */}
-                    {showDelayNotification && subtitleContent && (
-                      <div
-                        style={{
-                          position: 'absolute',
-                          top: '10px',
-                          left: '50%',
-                          transform: 'translateX(-50%)',
-                          background: 'rgba(0, 0, 0, 0.85)',
-                          color: subtitleDelay === 0 ? '#fff' : subtitleDelay > 0 ? '#22c55e' : '#f59e0b',
-                          padding: '8px 16px',
-                          borderRadius: '6px',
-                          fontSize: '0.9rem',
-                          fontWeight: 'bold',
-                          zIndex: 30,
-                          animation: 'fadeInOut 1.5s ease-out',
-                          boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
-                        }}
-                      >
-                        ⏱️ Subtitle Delay: {subtitleDelay > 0 ? '+' : ''}{subtitleDelay}ms
+                {/* Subtitle Delay Notification - Shared across all players */}
+                {showDelayNotification && subtitleContent && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '10px',
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      background: 'rgba(0, 0, 0, 0.85)',
+                      color: subtitleDelay === 0 ? '#fff' : subtitleDelay > 0 ? '#22c55e' : '#f59e0b',
+                      padding: '8px 16px',
+                      borderRadius: '6px',
+                      fontSize: '0.9rem',
+                      fontWeight: 'bold',
+                      zIndex: 30,
+                      animation: 'fadeInOut 1.5s ease-out',
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
+                    }}
+                  >
+                    ⏱️ Subtitle Delay: {subtitleDelay > 0 ? '+' : ''}{subtitleDelay}ms
+                  </div>
+                )}
+
+                {/* Track Selection Button - Always visible for external subtitles */}
+                {!isYouTube && (
+                  <button
+                    onClick={() => setShowTrackMenu(!showTrackMenu)}
+                    style={{
+                      position: 'absolute',
+                      top: '10px',
+                      right: '10px',
+                      background: 'rgba(0,0,0,0.7)',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '5px',
+                      padding: '8px 12px',
+                      cursor: 'pointer',
+                      fontSize: '0.9rem',
+                      zIndex: 15
+                    }}
+                  >
+                    ⚙️ Tracks
+                  </button>
+                )}
+
+                {/* Track Selection Menu */}
+                {showTrackMenu && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '50px',
+                    right: '10px',
+                    background: 'rgba(0,0,0,0.95)',
+                    color: 'white',
+                    borderRadius: '8px',
+                    padding: '1rem',
+                    minWidth: '200px',
+                    zIndex: 30,
+                    boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                      <strong>Track Settings</strong>
+                      <button
+                        onClick={() => setShowTrackMenu(false)}
+                        style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer' }}
+                      >✕</button>
+                    </div>
+
+                    {/* Audio Tracks */}
+                    {audioTracks.length > 1 && (
+                      <div style={{ marginBottom: '1rem' }}>
+                        <div style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '0.5rem' }}>🔊 Audio Track</div>
+                        {audioTracks.map((track, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => switchAudioTrack(idx)}
+                            style={{
+                              display: 'block',
+                              width: '100%',
+                              textAlign: 'left',
+                              background: selectedAudioTrack === idx ? 'rgba(99, 102, 241, 0.5)' : 'rgba(255,255,255,0.1)',
+                              color: 'white',
+                              border: 'none',
+                              padding: '0.5rem',
+                              marginBottom: '0.25rem',
+                              borderRadius: '4px',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            {selectedAudioTrack === idx && '✓ '}{track.label}
+                          </button>
+                        ))}
                       </div>
                     )}
 
-                    {/* Track Selection Button - Always visible for external subtitles */}
-                    {!isYouTube && (
-                      <button
-                        onClick={() => setShowTrackMenu(!showTrackMenu)}
-                        style={{
-                          position: 'absolute',
-                          top: '10px',
-                          right: '10px',
-                          background: 'rgba(0,0,0,0.7)',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '5px',
-                          padding: '8px 12px',
-                          cursor: 'pointer',
-                          fontSize: '0.9rem',
-                          zIndex: 15
-                        }}
-                      >
-                        ⚙️ Tracks
-                      </button>
-                    )}
-
-                    {/* Track Selection Menu */}
-                    {showTrackMenu && (
-                      <div style={{
-                        position: 'absolute',
-                        top: '50px',
-                        right: '10px',
-                        background: 'rgba(0,0,0,0.95)',
-                        color: 'white',
-                        borderRadius: '8px',
-                        padding: '1rem',
-                        minWidth: '200px',
-                        zIndex: 30,
-                        boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
-                      }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                          <strong>Track Settings</strong>
+                    {/* Subtitle Tracks */}
+                    {subtitleTracks.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '0.5rem' }}>📝 Subtitles</div>
+                        <button
+                          onClick={() => switchSubtitleTrack(-1)}
+                          style={{
+                            display: 'block',
+                            width: '100%',
+                            textAlign: 'left',
+                            background: selectedSubtitleTrack === -1 ? 'rgba(99, 102, 241, 0.5)' : 'rgba(255,255,255,0.1)',
+                            color: 'white',
+                            border: 'none',
+                            padding: '0.5rem',
+                            marginBottom: '0.25rem',
+                            borderRadius: '4px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          {selectedSubtitleTrack === -1 && '✓ '}Off
+                        </button>
+                        {subtitleTracks.map((track, idx) => (
                           <button
-                            onClick={() => setShowTrackMenu(false)}
-                            style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer' }}
-                          >✕</button>
-                        </div>
-
-                        {/* Audio Tracks */}
-                        {audioTracks.length > 1 && (
-                          <div style={{ marginBottom: '1rem' }}>
-                            <div style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '0.5rem' }}>🔊 Audio Track</div>
-                            {audioTracks.map((track, idx) => (
-                              <button
-                                key={idx}
-                                onClick={() => switchAudioTrack(idx)}
-                                style={{
-                                  display: 'block',
-                                  width: '100%',
-                                  textAlign: 'left',
-                                  background: selectedAudioTrack === idx ? 'rgba(99, 102, 241, 0.5)' : 'rgba(255,255,255,0.1)',
-                                  color: 'white',
-                                  border: 'none',
-                                  padding: '0.5rem',
-                                  marginBottom: '0.25rem',
-                                  borderRadius: '4px',
-                                  cursor: 'pointer'
-                                }}
-                              >
-                                {selectedAudioTrack === idx && '✓ '}{track.label}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Subtitle Tracks */}
-                        {subtitleTracks.length > 0 && (
-                          <div>
-                            <div style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '0.5rem' }}>📝 Subtitles</div>
-                            <button
-                              onClick={() => switchSubtitleTrack(-1)}
-                              style={{
-                                display: 'block',
-                                width: '100%',
-                                textAlign: 'left',
-                                background: selectedSubtitleTrack === -1 ? 'rgba(99, 102, 241, 0.5)' : 'rgba(255,255,255,0.1)',
-                                color: 'white',
-                                border: 'none',
-                                padding: '0.5rem',
-                                marginBottom: '0.25rem',
-                                borderRadius: '4px',
-                                cursor: 'pointer'
-                              }}
-                            >
-                              {selectedSubtitleTrack === -1 && '✓ '}Off
-                            </button>
-                            {subtitleTracks.map((track, idx) => (
-                              <button
-                                key={idx}
-                                onClick={() => switchSubtitleTrack(idx)}
-                                style={{
-                                  display: 'block',
-                                  width: '100%',
-                                  textAlign: 'left',
-                                  background: selectedSubtitleTrack === idx ? 'rgba(99, 102, 241, 0.5)' : 'rgba(255,255,255,0.1)',
-                                  color: 'white',
-                                  border: 'none',
-                                  padding: '0.5rem',
-                                  marginBottom: '0.25rem',
-                                  borderRadius: '4px',
-                                  cursor: 'pointer'
-                                }}
-                              >
-                                {selectedSubtitleTrack === idx && '✓ '}{track.label}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* SRT/VTT Subtitle Overlay with Delay Adjustment */}
-                        <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.2)' }}>
-                          <div style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '0.5rem' }}>
-                            📝 Subtitle Overlay (SRT/VTT with Sync)
-                          </div>
-
-                          {/* Upload SRT/VTT File */}
-                          <label
+                            key={idx}
+                            onClick={() => switchSubtitleTrack(idx)}
                             style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: '0.5rem',
+                              display: 'block',
                               width: '100%',
-                              padding: '0.75rem',
-                              background: subtitleContent ? 'linear-gradient(135deg, rgba(34, 197, 94, 0.3) 0%, rgba(22, 163, 74, 0.3) 100%)' : 'linear-gradient(135deg, rgba(99, 102, 241, 0.3) 0%, rgba(139, 92, 246, 0.3) 100%)',
-                              border: subtitleContent ? '1px solid rgba(34, 197, 94, 0.5)' : '1px dashed rgba(99, 102, 241, 0.5)',
-                              borderRadius: '6px',
+                              textAlign: 'left',
+                              background: selectedSubtitleTrack === idx ? 'rgba(99, 102, 241, 0.5)' : 'rgba(255,255,255,0.1)',
                               color: 'white',
-                              cursor: 'pointer',
-                              fontSize: '0.85rem',
-                              textAlign: 'center',
-                              transition: 'all 0.2s ease'
+                              border: 'none',
+                              padding: '0.5rem',
+                              marginBottom: '0.25rem',
+                              borderRadius: '4px',
+                              cursor: 'pointer'
                             }}
                           >
-                            {subtitleContent ? `✓ ${subtitleFileName}` : '📁 Upload SRT or VTT File'}
-                            <input
-                              type="file"
-                              accept=".srt,.vtt"
-                              style={{ display: 'none' }}
-                              onChange={(e) => {
-                                const file = e.target.files[0];
-                                if (file) {
-                                  const reader = new FileReader();
-                                  reader.onload = (event) => {
-                                    setSubtitleContent(event.target.result);
-                                    setSubtitleFileName(file.name);
-                                    setSubtitleEnabled(true);
-                                    setSubtitleDelay(0); // Reset delay when loading new file
-                                  };
-                                  reader.readAsText(file);
-                                }
-                                e.target.value = '';
+                            {selectedSubtitleTrack === idx && '✓ '}{track.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* SRT/VTT Subtitle Overlay with Delay Adjustment */}
+                    <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.2)' }}>
+                      <div style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '0.5rem' }}>
+                        📝 Subtitle Overlay (SRT/VTT with Sync)
+                      </div>
+
+                      {/* Upload SRT/VTT File */}
+                      <label
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '0.5rem',
+                          width: '100%',
+                          padding: '0.75rem',
+                          background: subtitleContent ? 'linear-gradient(135deg, rgba(34, 197, 94, 0.3) 0%, rgba(22, 163, 74, 0.3) 100%)' : 'linear-gradient(135deg, rgba(99, 102, 241, 0.3) 0%, rgba(139, 92, 246, 0.3) 100%)',
+                          border: subtitleContent ? '1px solid rgba(34, 197, 94, 0.5)' : '1px dashed rgba(99, 102, 241, 0.5)',
+                          borderRadius: '6px',
+                          color: 'white',
+                          cursor: 'pointer',
+                          fontSize: '0.85rem',
+                          textAlign: 'center',
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        {subtitleContent ? `✓ ${subtitleFileName}` : '📁 Upload SRT or VTT File'}
+                        <input
+                          type="file"
+                          accept=".srt,.vtt"
+                          style={{ display: 'none' }}
+                          onChange={(e) => {
+                            const file = e.target.files[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = (event) => {
+                                setSubtitleContent(event.target.result);
+                                setSubtitleFileName(file.name);
+                                setSubtitleEnabled(true);
+                                setSubtitleDelay(0); // Reset delay when loading new file
+                              };
+                              reader.readAsText(file);
+                            }
+                            e.target.value = '';
+                          }}
+                        />
+                      </label>
+
+                      {subtitleContent && (
+                        <>
+                          {/* Enable/Disable Toggle */}
+                          <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <span style={{ fontSize: '0.8rem' }}>Show Subtitles</span>
+                            <button
+                              onClick={() => setSubtitleEnabled(!subtitleEnabled)}
+                              style={{
+                                padding: '0.4rem 1rem',
+                                background: subtitleEnabled ? 'rgba(34, 197, 94, 0.4)' : 'rgba(239, 68, 68, 0.3)',
+                                border: 'none',
+                                borderRadius: '4px',
+                                color: 'white',
+                                cursor: 'pointer',
+                                fontSize: '0.75rem',
+                                fontWeight: 'bold'
                               }}
-                            />
-                          </label>
+                            >
+                              {subtitleEnabled ? 'ON' : 'OFF'}
+                            </button>
+                          </div>
 
-                          {subtitleContent && (
-                            <>
-                              {/* Enable/Disable Toggle */}
-                              <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <span style={{ fontSize: '0.8rem' }}>Show Subtitles</span>
-                                <button
-                                  onClick={() => setSubtitleEnabled(!subtitleEnabled)}
-                                  style={{
-                                    padding: '0.4rem 1rem',
-                                    background: subtitleEnabled ? 'rgba(34, 197, 94, 0.4)' : 'rgba(239, 68, 68, 0.3)',
-                                    border: 'none',
-                                    borderRadius: '4px',
-                                    color: 'white',
-                                    cursor: 'pointer',
-                                    fontSize: '0.75rem',
-                                    fontWeight: 'bold'
-                                  }}
-                                >
-                                  {subtitleEnabled ? 'ON' : 'OFF'}
-                                </button>
-                              </div>
-
-                              {/* Delay Adjustment */}
-                              <div style={{ marginTop: '0.75rem' }}>
-                                <div style={{ fontSize: '0.75rem', color: '#aaa', marginBottom: '0.4rem', display: 'flex', justifyContent: 'space-between' }}>
-                                  <span>⏱️ Sync Delay</span>
-                                  <span style={{
-                                    color: subtitleDelay === 0 ? '#888' : subtitleDelay > 0 ? '#22c55e' : '#f59e0b',
-                                    fontWeight: 'bold'
-                                  }}>
-                                    {subtitleDelay > 0 ? '+' : ''}{subtitleDelay} ms
-                                  </span>
-                                </div>
-                                <div style={{ display: 'flex', gap: '0.25rem' }}>
-                                  <button
-                                    onClick={() => setSubtitleDelay(prev => prev - 500)}
-                                    style={{
-                                      flex: 1,
-                                      padding: '0.4rem',
-                                      background: 'rgba(239, 68, 68, 0.3)',
-                                      border: 'none',
-                                      borderRadius: '4px',
-                                      color: 'white',
-                                      cursor: 'pointer',
-                                      fontSize: '0.75rem'
-                                    }}
-                                  >
-                                    -500ms
-                                  </button>
-                                  <button
-                                    onClick={() => setSubtitleDelay(prev => prev - 100)}
-                                    style={{
-                                      flex: 1,
-                                      padding: '0.4rem',
-                                      background: 'rgba(239, 68, 68, 0.2)',
-                                      border: 'none',
-                                      borderRadius: '4px',
-                                      color: 'white',
-                                      cursor: 'pointer',
-                                      fontSize: '0.75rem'
-                                    }}
-                                  >
-                                    -100ms
-                                  </button>
-                                  <button
-                                    onClick={() => setSubtitleDelay(0)}
-                                    style={{
-                                      padding: '0.4rem 0.6rem',
-                                      background: 'rgba(255,255,255,0.1)',
-                                      border: 'none',
-                                      borderRadius: '4px',
-                                      color: 'white',
-                                      cursor: 'pointer',
-                                      fontSize: '0.75rem'
-                                    }}
-                                  >
-                                    Reset
-                                  </button>
-                                  <button
-                                    onClick={() => setSubtitleDelay(prev => prev + 100)}
-                                    style={{
-                                      flex: 1,
-                                      padding: '0.4rem',
-                                      background: 'rgba(34, 197, 94, 0.2)',
-                                      border: 'none',
-                                      borderRadius: '4px',
-                                      color: 'white',
-                                      cursor: 'pointer',
-                                      fontSize: '0.75rem'
-                                    }}
-                                  >
-                                    +100ms
-                                  </button>
-                                  <button
-                                    onClick={() => setSubtitleDelay(prev => prev + 500)}
-                                    style={{
-                                      flex: 1,
-                                      padding: '0.4rem',
-                                      background: 'rgba(34, 197, 94, 0.3)',
-                                      border: 'none',
-                                      borderRadius: '4px',
-                                      color: 'white',
-                                      cursor: 'pointer',
-                                      fontSize: '0.75rem'
-                                    }}
-                                  >
-                                    +500ms
-                                  </button>
-                                </div>
-                                <small style={{ fontSize: '0.65rem', color: '#666', marginTop: '0.25rem', display: 'block' }}>
-                                  Positive = subtitles appear later, Negative = earlier
-                                </small>
-                              </div>
-
-                              {/* Font Size */}
-                              <div style={{ marginTop: '0.75rem' }}>
-                                <div style={{ fontSize: '0.75rem', color: '#aaa', marginBottom: '0.4rem', display: 'flex', justifyContent: 'space-between' }}>
-                                  <span>🔤 Font Size</span>
-                                  <span>{subtitleFontSize}px</span>
-                                </div>
-                                <input
-                                  type="range"
-                                  min="14"
-                                  max="48"
-                                  value={subtitleFontSize}
-                                  onChange={(e) => setSubtitleFontSize(parseInt(e.target.value))}
-                                  style={{
-                                    width: '100%',
-                                    accentColor: '#6366f1'
-                                  }}
-                                />
-                              </div>
-
-                              {/* Clear Subtitles */}
+                          {/* Delay Adjustment */}
+                          <div style={{ marginTop: '0.75rem' }}>
+                            <div style={{ fontSize: '0.75rem', color: '#aaa', marginBottom: '0.4rem', display: 'flex', justifyContent: 'space-between' }}>
+                              <span>⏱️ Sync Delay</span>
+                              <span style={{
+                                color: subtitleDelay === 0 ? '#888' : subtitleDelay > 0 ? '#22c55e' : '#f59e0b',
+                                fontWeight: 'bold'
+                              }}>
+                                {subtitleDelay > 0 ? '+' : ''}{subtitleDelay} ms
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.25rem' }}>
                               <button
-                                onClick={() => {
-                                  setSubtitleContent('');
-                                  setSubtitleFileName('');
-                                  setSubtitleDelay(0);
-                                }}
+                                onClick={() => setSubtitleDelay(prev => prev - 500)}
                                 style={{
-                                  width: '100%',
-                                  marginTop: '0.75rem',
-                                  padding: '0.5rem',
+                                  flex: 1,
+                                  padding: '0.4rem',
                                   background: 'rgba(239, 68, 68, 0.3)',
                                   border: 'none',
                                   borderRadius: '4px',
                                   color: 'white',
                                   cursor: 'pointer',
-                                  fontSize: '0.8rem'
+                                  fontSize: '0.75rem'
                                 }}
                               >
-                                🗑️ Remove Subtitles
+                                -500ms
                               </button>
-                            </>
-                          )}
-
-                          <small style={{ color: '#666', display: 'block', marginTop: '0.5rem', fontSize: '0.7rem' }}>
-                            SRT/VTT files are rendered as overlay. Use delay to sync subtitles with video.
-                          </small>
-                        </div>
-
-                        {/* Legacy VTT URL Input (for browser-native subtitles) */}
-                        <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
-                          <details style={{ color: '#888' }}>
-                            <summary style={{ fontSize: '0.7rem', cursor: 'pointer' }}>Advanced: VTT URL (no delay support)</summary>
-                            <input
-                              type="url"
-                              placeholder="Enter VTT URL..."
-                              value={subtitleUrl}
-                              onChange={(e) => setSubtitleUrl(e.target.value)}
-                              style={{
-                                width: '100%',
-                                padding: '0.4rem',
-                                marginTop: '0.5rem',
-                                background: 'rgba(255,255,255,0.1)',
-                                border: '1px solid rgba(255,255,255,0.2)',
-                                borderRadius: '4px',
-                                color: 'white',
-                                fontSize: '0.75rem'
-                              }}
-                            />
-                            {subtitleUrl && (
                               <button
-                                onClick={() => setSubtitleUrl('')}
+                                onClick={() => setSubtitleDelay(prev => prev - 100)}
                                 style={{
-                                  width: '100%',
-                                  marginTop: '0.25rem',
-                                  padding: '0.3rem',
+                                  flex: 1,
+                                  padding: '0.4rem',
                                   background: 'rgba(239, 68, 68, 0.2)',
                                   border: 'none',
                                   borderRadius: '4px',
-                                  color: '#999',
+                                  color: 'white',
                                   cursor: 'pointer',
-                                  fontSize: '0.7rem'
+                                  fontSize: '0.75rem'
                                 }}
                               >
-                                Clear URL
+                                -100ms
                               </button>
-                            )}
-                          </details>
-                        </div>
-                      </div>
-                    )}
+                              <button
+                                onClick={() => setSubtitleDelay(0)}
+                                style={{
+                                  padding: '0.4rem 0.6rem',
+                                  background: 'rgba(255,255,255,0.1)',
+                                  border: 'none',
+                                  borderRadius: '4px',
+                                  color: 'white',
+                                  cursor: 'pointer',
+                                  fontSize: '0.75rem'
+                                }}
+                              >
+                                Reset
+                              </button>
+                              <button
+                                onClick={() => setSubtitleDelay(prev => prev + 100)}
+                                style={{
+                                  flex: 1,
+                                  padding: '0.4rem',
+                                  background: 'rgba(34, 197, 94, 0.2)',
+                                  border: 'none',
+                                  borderRadius: '4px',
+                                  color: 'white',
+                                  cursor: 'pointer',
+                                  fontSize: '0.75rem'
+                                }}
+                              >
+                                +100ms
+                              </button>
+                              <button
+                                onClick={() => setSubtitleDelay(prev => prev + 500)}
+                                style={{
+                                  flex: 1,
+                                  padding: '0.4rem',
+                                  background: 'rgba(34, 197, 94, 0.3)',
+                                  border: 'none',
+                                  borderRadius: '4px',
+                                  color: 'white',
+                                  cursor: 'pointer',
+                                  fontSize: '0.75rem'
+                                }}
+                              >
+                                +500ms
+                              </button>
+                            </div>
+                            <small style={{ fontSize: '0.65rem', color: '#666', marginTop: '0.25rem', display: 'block' }}>
+                              Positive = subtitles appear later, Negative = earlier
+                            </small>
+                          </div>
 
-                    {videoError && (
-                      <div style={{
-                        position: 'absolute',
-                        inset: 0,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        backgroundColor: 'rgba(0,0,0,0.9)',
-                        color: '#ef4444',
-                        padding: '2rem',
-                        textAlign: 'center'
-                      }}>
-                        <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⚠️</div>
-                        <div style={{ fontSize: '1.2rem', fontWeight: 'bold', marginBottom: '0.5rem' }}>{videoError}</div>
-                        <div style={{ fontSize: '0.9rem', color: '#999', maxWidth: '300px' }}>
-                          This video may not be compatible with your browser. Try a different browser or video source.
-                        </div>
+                          {/* Font Size */}
+                          <div style={{ marginTop: '0.75rem' }}>
+                            <div style={{ fontSize: '0.75rem', color: '#aaa', marginBottom: '0.4rem', display: 'flex', justifyContent: 'space-between' }}>
+                              <span>🔤 Font Size</span>
+                              <span>{subtitleFontSize}px</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="14"
+                              max="48"
+                              value={subtitleFontSize}
+                              onChange={(e) => setSubtitleFontSize(parseInt(e.target.value))}
+                              style={{
+                                width: '100%',
+                                accentColor: '#6366f1'
+                              }}
+                            />
+                          </div>
+
+                          {/* Clear Subtitles */}
+                          <button
+                            onClick={() => {
+                              setSubtitleContent('');
+                              setSubtitleFileName('');
+                              setSubtitleDelay(0);
+                            }}
+                            style={{
+                              width: '100%',
+                              marginTop: '0.75rem',
+                              padding: '0.5rem',
+                              background: 'rgba(239, 68, 68, 0.3)',
+                              border: 'none',
+                              borderRadius: '4px',
+                              color: 'white',
+                              cursor: 'pointer',
+                              fontSize: '0.8rem'
+                            }}
+                          >
+                            🗑️ Remove Subtitles
+                          </button>
+                        </>
+                      )}
+
+                      <small style={{ color: '#666', display: 'block', marginTop: '0.5rem', fontSize: '0.7rem' }}>
+                        SRT/VTT files are rendered as overlay. Use delay to sync subtitles with video.
+                      </small>
+                    </div>
+
+                    {/* Legacy VTT URL Input (for browser-native subtitles) */}
+                    <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+                      <details style={{ color: '#888' }}>
+                        <summary style={{ fontSize: '0.7rem', cursor: 'pointer' }}>Advanced: VTT URL (no delay support)</summary>
+                        <input
+                          type="url"
+                          placeholder="Enter VTT URL..."
+                          value={subtitleUrl}
+                          onChange={(e) => setSubtitleUrl(e.target.value)}
+                          style={{
+                            width: '100%',
+                            padding: '0.4rem',
+                            marginTop: '0.5rem',
+                            background: 'rgba(255,255,255,0.1)',
+                            border: '1px solid rgba(255,255,255,0.2)',
+                            borderRadius: '4px',
+                            color: 'white',
+                            fontSize: '0.75rem'
+                          }}
+                        />
+                        {subtitleUrl && (
+                          <button
+                            onClick={() => setSubtitleUrl('')}
+                            style={{
+                              width: '100%',
+                              marginTop: '0.25rem',
+                              padding: '0.3rem',
+                              background: 'rgba(239, 68, 68, 0.2)',
+                              border: 'none',
+                              borderRadius: '4px',
+                              color: '#999',
+                              cursor: 'pointer',
+                              fontSize: '0.7rem'
+                            }}
+                          >
+                            Clear URL
+                          </button>
+                        )}
+                      </details>
+                    </div>
+
+                    {/* Player Toggle */}
+                    <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '0.75rem', marginTop: '0.75rem' }}>
+                      <div style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '0.5rem' }}>🎬 Video Player</div>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button
+                          onClick={() => setUseVideoJs(true)}
+                          style={{
+                            flex: 1,
+                            padding: '0.5rem',
+                            background: useVideoJs ? 'rgba(99, 102, 241, 0.5)' : 'rgba(255,255,255,0.1)',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '0.75rem'
+                          }}
+                        >
+                          {useVideoJs && '✓ '}Video.js
+                        </button>
+                        <button
+                          onClick={() => setUseVideoJs(false)}
+                          style={{
+                            flex: 1,
+                            padding: '0.5rem',
+                            background: !useVideoJs ? 'rgba(99, 102, 241, 0.5)' : 'rgba(255,255,255,0.1)',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '0.75rem'
+                          }}
+                        >
+                          {!useVideoJs && '✓ '}Native
+                        </button>
                       </div>
-                    )}
-                  </>
+                      <div style={{ fontSize: '0.65rem', color: '#666', marginTop: '0.5rem' }}>
+                        Video.js: Better controls, quality selection. Native: Lightweight.
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {videoError && (
+                  <div style={{
+                    position: 'absolute',
+                    inset: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: 'rgba(0,0,0,0.9)',
+                    color: '#ef4444',
+                    padding: '2rem',
+                    textAlign: 'center'
+                  }}>
+                    <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⚠️</div>
+                    <div style={{ fontSize: '1.2rem', fontWeight: 'bold', marginBottom: '0.5rem' }}>{videoError}</div>
+                    <div style={{ fontSize: '0.9rem', color: '#999', maxWidth: '300px' }}>
+                      This video may not be compatible with your browser. Try a different browser or video source.
+                    </div>
+                  </div>
                 )}
               </div>
             ) : (
@@ -2263,7 +2394,7 @@ function App() {
             </div>
           )}
         </aside>
-      </main>
+      </main >
       {maximizedVideo && (
         <div className="maximized-overlay" style={{
           position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.9)',
@@ -2293,38 +2424,41 @@ function App() {
             </div>
           </div>
         </div>
-      )}
+      )
+      }
 
       {/* Debug Log Overlay */}
-      {showDebug && (
-        <div style={{
-          position: 'fixed',
-          bottom: '20px',
-          right: '340px', // Left of sidebar
-          width: '400px',
-          height: '300px',
-          background: 'rgba(0,0,0,0.85)',
-          border: '1px solid rgba(255,255,255,0.2)',
-          borderRadius: '8px',
-          padding: '10px',
-          zIndex: 9999,
-          display: 'flex',
-          flexDirection: 'column',
-          fontSize: '0.75rem',
-          color: '#0f0',
-          fontFamily: 'monospace'
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px', borderBottom: '1px solid #333' }}>
-            <span>Debug Log ({debugLogs.length})</span>
-            <button onClick={() => setDebugLogs([])} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer' }}>Clear</button>
+      {
+        showDebug && (
+          <div style={{
+            position: 'fixed',
+            bottom: '20px',
+            right: '340px', // Left of sidebar
+            width: '400px',
+            height: '300px',
+            background: 'rgba(0,0,0,0.85)',
+            border: '1px solid rgba(255,255,255,0.2)',
+            borderRadius: '8px',
+            padding: '10px',
+            zIndex: 9999,
+            display: 'flex',
+            flexDirection: 'column',
+            fontSize: '0.75rem',
+            color: '#0f0',
+            fontFamily: 'monospace'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px', borderBottom: '1px solid #333' }}>
+              <span>Debug Log ({debugLogs.length})</span>
+              <button onClick={() => setDebugLogs([])} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer' }}>Clear</button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column-reverse' }}>
+              {debugLogs.map((log, i) => (
+                <div key={i} style={{ padding: '2px 0', borderBottom: '1px solid #222' }}>{log}</div>
+              ))}
+            </div>
           </div>
-          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column-reverse' }}>
-            {debugLogs.map((log, i) => (
-              <div key={i} style={{ padding: '2px 0', borderBottom: '1px solid #222' }}>{log}</div>
-            ))}
-          </div>
-        </div>
-      )}
+        )
+      }
 
       {/* Debug Toggle Button (Hidden in plain sight, e.g., double click logo or specific key) */}
       <button
@@ -2333,7 +2467,7 @@ function App() {
       >
         {showDebug ? 'Hide Debug' : 'Show Debug'}
       </button>
-    </div>
+    </div >
   );
 }
 

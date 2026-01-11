@@ -12,6 +12,7 @@
     "start": "NODE_ENV=production node server/index.js"
   },
   "dependencies": {
+    "@videojs/http-streaming": "^3.17.2",
     "@vitejs/plugin-react": "^5.1.1",
     "cors": "^2.8.5",
     "express": "^5.1.0",
@@ -22,6 +23,7 @@
     "react-player": "^3.4.0",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
+    "video.js": "^8.23.4",
     "vite": "^7.2.6"
   },
   "devDependencies": {

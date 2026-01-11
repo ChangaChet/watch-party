@@ -1,0 +1,210 @@
+/* Video.js Custom Theme for Watch Party */
+
+/* Override default Video.js colors to match app theme */
+.vjs-theme-watch-party {
+    --vjs-primary: #6366f1;
+    --vjs-secondary: #ec4899;
+}
+
+.vjs-theme-watch-party.video-js {
+    font-family: 'Outfit', sans-serif;
+    background-color: #000;
+}
+
+/* Big play button styling */
+.vjs-theme-watch-party .vjs-big-play-button {
+    background: linear-gradient(135deg, #6366f1 0%, #ec4899 100%);
+    border: none;
+    border-radius: 50%;
+    width: 80px;
+    height: 80px;
+    line-height: 80px;
+    font-size: 3rem;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4);
+}
+
+.vjs-theme-watch-party .vjs-big-play-button:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 30px rgba(99, 102, 241, 0.6);
+}
+
+.vjs-theme-watch-party .vjs-big-play-button:focus {
+    outline: none;
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.3);
+}
+
+/* Control bar styling */
+.vjs-theme-watch-party .vjs-control-bar {
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.7) 50%, transparent 100%);
+    height: 50px;
+    padding-bottom: 5px;
+}
+
+/* Progress bar */
+.vjs-theme-watch-party .vjs-progress-control {
+    position: absolute;
+    top: -10px;
+    left: 0;
+    right: 0;
+    width: 100%;
+    height: 10px;
+}
+
+.vjs-theme-watch-party .vjs-progress-holder {
+    margin: 0;
+    height: 4px;
+    transition: height 0.2s ease;
+}
+
+.vjs-theme-watch-party .vjs-progress-control:hover .vjs-progress-holder {
+    height: 8px;
+}
+
+.vjs-theme-watch-party .vjs-play-progress {
+    background: linear-gradient(90deg, #6366f1 0%, #ec4899 100%);
+}
+
+.vjs-theme-watch-party .vjs-load-progress {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.vjs-theme-watch-party .vjs-play-progress:before {
+    display: none;
+}
+
+/* Slider (mouse scrubber) */
+.vjs-theme-watch-party .vjs-slider:focus {
+    text-shadow: none;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.5);
+}
+
+/* Time display */
+.vjs-theme-watch-party .vjs-time-control {
+    font-size: 0.85rem;
+    padding: 0 8px;
+}
+
+.vjs-theme-watch-party .vjs-current-time,
+.vjs-theme-watch-party .vjs-duration {
+    display: block;
+}
+
+/* Volume control */
+.vjs-theme-watch-party .vjs-volume-bar {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.vjs-theme-watch-party .vjs-volume-level {
+    background: linear-gradient(90deg, #6366f1 0%, #8b5cf6 100%);
+}
+
+/* Buttons hover effect */
+.vjs-theme-watch-party .vjs-control:hover {
+    color: #ec4899;
+}
+
+.vjs-theme-watch-party .vjs-button>.vjs-icon-placeholder:before {
+    font-size: 1.6rem;
+}
+
+/* Playback rate menu */
+.vjs-theme-watch-party .vjs-playback-rate .vjs-playback-rate-value {
+    font-size: 0.9rem;
+    line-height: 40px;
+}
+
+.vjs-theme-watch-party .vjs-menu-button-popup .vjs-menu {
+    background: rgba(15, 23, 42, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    backdrop-filter: blur(8px);
+    overflow: hidden;
+}
+
+.vjs-theme-watch-party .vjs-menu li {
+    padding: 8px 16px;
+    font-size: 0.85rem;
+    transition: background 0.2s ease;
+}
+
+.vjs-theme-watch-party .vjs-menu li:hover {
+    background: rgba(99, 102, 241, 0.3);
+}
+
+.vjs-theme-watch-party .vjs-menu li.vjs-selected {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.5) 0%, rgba(139, 92, 246, 0.5) 100%);
+    color: white;
+}
+
+/* Captions/Subtitles styling */
+.vjs-theme-watch-party .vjs-text-track-display>div>div>div {
+    background: rgba(0, 0, 0, 0.8) !important;
+    font-family: 'Outfit', Arial, sans-serif !important;
+    border-radius: 4px;
+    padding: 4px 8px !important;
+}
+
+/* Fullscreen button */
+.vjs-theme-watch-party .vjs-fullscreen-control {
+    cursor: pointer;
+}
+
+/* Picture-in-Picture button */
+.vjs-theme-watch-party .vjs-picture-in-picture-control {
+    cursor: pointer;
+}
+
+/* Loading spinner */
+.vjs-theme-watch-party .vjs-loading-spinner {
+    border: 4px solid rgba(99, 102, 241, 0.2);
+    border-top-color: #6366f1;
+}
+
+/* Error display */
+.vjs-theme-watch-party .vjs-error-display {
+    background: rgba(15, 23, 42, 0.95);
+}
+
+.vjs-theme-watch-party .vjs-error-display:before {
+    color: #ef4444;
+}
+
+/* Poster image */
+.vjs-theme-watch-party .vjs-poster {
+    background-size: cover;
+}
+
+/* Seek tooltip */
+.vjs-theme-watch-party .vjs-mouse-display .vjs-time-tooltip {
+    background: rgba(15, 23, 42, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    font-size: 0.8rem;
+    padding: 4px 8px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .vjs-theme-watch-party .vjs-big-play-button {
+        width: 60px;
+        height: 60px;
+        line-height: 60px;
+        font-size: 2rem;
+    }
+
+    .vjs-theme-watch-party .vjs-control-bar {
+        height: 40px;
+    }
+
+    .vjs-theme-watch-party .vjs-button>.vjs-icon-placeholder:before {
+        font-size: 1.3rem;
+    }
+}
+
+/* Hide quality selector on very small screens */
+@media (max-width: 480px) {
+    .vjs-theme-watch-party .vjs-playback-rate {
+        display: none;
+    }
+}
