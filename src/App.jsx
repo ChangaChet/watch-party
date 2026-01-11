@@ -3,6 +3,7 @@ import io from 'socket.io-client';
 import Hls from 'hls.js';
 import './App.css';
 import SrtToVttConverter from './SrtToVttConverter';
+import SubtitleOverlay from './SubtitleOverlay';
 
 const SOCKET_URL = import.meta.env.PROD
   ? window.location.origin
@@ -199,6 +200,14 @@ function App() {
   const [showConverter, setShowConverter] = useState(false); // SRT to VTT converter modal
   const [debugLogs, setDebugLogs] = useState([]);
   const [showDebug, setShowDebug] = useState(false);
+
+  // Subtitle overlay settings
+  const [subtitleContent, setSubtitleContent] = useState(''); // Raw SRT/VTT content
+  const [subtitleDelay, setSubtitleDelay] = useState(0); // Delay in milliseconds (positive = subtitles appear later, negative = earlier)
+  const [subtitleFontSize, setSubtitleFontSize] = useState(24);
+  const [subtitleEnabled, setSubtitleEnabled] = useState(true);
+  const [subtitleFileName, setSubtitleFileName] = useState(''); // For display purposes
+  const [showDelayNotification, setShowDelayNotification] = useState(false); // For keyboard shortcut feedback
 
   const addLog = (msg, ...args) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -746,6 +755,43 @@ function App() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Keyboard shortcuts for subtitle delay adjustment
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Only handle if not typing in an input field
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+      let delayChanged = false;
+
+      // Subtitle delay shortcuts: [ and ] for ±100ms, { and } for ±500ms
+      if (e.key === '[' || e.key === '{') {
+        e.preventDefault();
+        const delta = e.shiftKey || e.key === '{' ? -500 : -100;
+        setSubtitleDelay(prev => prev + delta);
+        delayChanged = true;
+      } else if (e.key === ']' || e.key === '}') {
+        e.preventDefault();
+        const delta = e.shiftKey || e.key === '}' ? 500 : 100;
+        setSubtitleDelay(prev => prev + delta);
+        delayChanged = true;
+      } else if (e.key === '\\') {
+        // Reset delay with backslash
+        e.preventDefault();
+        setSubtitleDelay(0);
+        delayChanged = true;
+      }
+
+      // Show notification when delay changes
+      if (delayChanged && subtitleContent) {
+        setShowDelayNotification(true);
+        setTimeout(() => setShowDelayNotification(false), 1500);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [subtitleContent]);
 
 
 
@@ -1455,7 +1501,6 @@ function App() {
                       playsInline
                       webkit-playsinline="true"
                     >
-                      {/* External subtitle track - Note: May not work with Real-Debrid due to CORS */}
                       {subtitleUrl && (
                         <track
                           kind="subtitles"
@@ -1466,6 +1511,38 @@ function App() {
                         />
                       )}
                     </video>
+
+                    {/* Subtitle Overlay - Renders SRT/VTT subtitles with delay adjustment */}
+                    <SubtitleOverlay
+                      videoRef={videoRef}
+                      subtitleContent={subtitleContent}
+                      delay={subtitleDelay}
+                      fontSize={subtitleFontSize}
+                      enabled={subtitleEnabled}
+                    />
+
+                    {/* Subtitle Delay Notification */}
+                    {showDelayNotification && subtitleContent && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: '10px',
+                          left: '50%',
+                          transform: 'translateX(-50%)',
+                          background: 'rgba(0, 0, 0, 0.85)',
+                          color: subtitleDelay === 0 ? '#fff' : subtitleDelay > 0 ? '#22c55e' : '#f59e0b',
+                          padding: '8px 16px',
+                          borderRadius: '6px',
+                          fontSize: '0.9rem',
+                          fontWeight: 'bold',
+                          zIndex: 30,
+                          animation: 'fadeInOut 1.5s ease-out',
+                          boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
+                        }}
+                      >
+                        ⏱️ Subtitle Delay: {subtitleDelay > 0 ? '+' : ''}{subtitleDelay}ms
+                      </div>
+                    )}
 
                     {/* Track Selection Button - Always visible for external subtitles */}
                     {!isYouTube && (
@@ -1582,96 +1659,254 @@ function App() {
                           </div>
                         )}
 
-                        {/* External Subtitle URL Input */}
+                        {/* SRT/VTT Subtitle Overlay with Delay Adjustment */}
                         <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.2)' }}>
-                          <div style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '0.5rem' }}>📄 External Subtitles (VTT)</div>
-                          <input
-                            type="url"
-                            placeholder="Enter subtitle URL (.vtt)"
-                            value={subtitleUrl}
-                            onChange={(e) => setSubtitleUrl(e.target.value)}
-                            style={{
-                              width: '100%',
-                              padding: '0.5rem',
-                              background: 'rgba(255,255,255,0.1)',
-                              border: '1px solid rgba(255,255,255,0.2)',
-                              borderRadius: '4px',
-                              color: 'white',
-                              fontSize: '0.8rem',
-                              marginBottom: '0.5rem'
-                            }}
-                          />
-                          {subtitleUrl && (
-                            <button
-                              onClick={() => setSubtitleUrl('')}
-                              style={{
-                                width: '100%',
-                                padding: '0.5rem',
-                                background: 'rgba(239, 68, 68, 0.3)',
-                                border: 'none',
-                                borderRadius: '4px',
-                                color: 'white',
-                                cursor: 'pointer',
-                                fontSize: '0.8rem'
-                              }}
-                            >
-                              Clear Subtitles
-                            </button>
-                          )}
-
-                          {/* VTT File Upload */}
-                          <div style={{ marginTop: '0.75rem' }}>
-                            <label
-                              style={{
-                                display: 'block',
-                                width: '100%',
-                                padding: '0.5rem',
-                                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.3) 0%, rgba(139, 92, 246, 0.3) 100%)',
-                                border: '1px dashed rgba(99, 102, 241, 0.5)',
-                                borderRadius: '4px',
-                                color: 'white',
-                                cursor: 'pointer',
-                                fontSize: '0.8rem',
-                                textAlign: 'center',
-                                transition: 'all 0.2s ease'
-                              }}
-                              onMouseOver={(e) => e.currentTarget.style.background = 'linear-gradient(135deg, rgba(99, 102, 241, 0.5) 0%, rgba(139, 92, 246, 0.5) 100%)'}
-                              onMouseOut={(e) => e.currentTarget.style.background = 'linear-gradient(135deg, rgba(99, 102, 241, 0.3) 0%, rgba(139, 92, 246, 0.3) 100%)'}
-                            >
-                              📁 Upload VTT File
-                              <input
-                                type="file"
-                                accept=".vtt"
-                                style={{ display: 'none' }}
-                                onChange={(e) => {
-                                  const file = e.target.files[0];
-                                  if (file) {
-                                    // Revoke previous blob URL if exists
-                                    if (subtitleUrl && subtitleUrl.startsWith('blob:')) {
-                                      URL.revokeObjectURL(subtitleUrl);
-                                    }
-                                    // Create blob URL for the uploaded file
-                                    const blobUrl = URL.createObjectURL(file);
-                                    setSubtitleUrl(blobUrl);
-                                    // Force video to reload subtitles
-                                    if (videoRef.current) {
-                                      const video = videoRef.current;
-                                      const currentTime = video.currentTime;
-                                      const wasPlaying = !video.paused;
-                                      video.load();
-                                      video.currentTime = currentTime;
-                                      if (wasPlaying) video.play();
-                                    }
-                                  }
-                                  e.target.value = ''; // Reset input
-                                }}
-                              />
-                            </label>
+                          <div style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '0.5rem' }}>
+                            📝 Subtitle Overlay (SRT/VTT with Sync)
                           </div>
 
-                          <small style={{ color: '#888', display: 'block', marginTop: '0.5rem' }}>
-                            Upload a .vtt file or enter a URL to add subtitles.
+                          {/* Upload SRT/VTT File */}
+                          <label
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '0.5rem',
+                              width: '100%',
+                              padding: '0.75rem',
+                              background: subtitleContent ? 'linear-gradient(135deg, rgba(34, 197, 94, 0.3) 0%, rgba(22, 163, 74, 0.3) 100%)' : 'linear-gradient(135deg, rgba(99, 102, 241, 0.3) 0%, rgba(139, 92, 246, 0.3) 100%)',
+                              border: subtitleContent ? '1px solid rgba(34, 197, 94, 0.5)' : '1px dashed rgba(99, 102, 241, 0.5)',
+                              borderRadius: '6px',
+                              color: 'white',
+                              cursor: 'pointer',
+                              fontSize: '0.85rem',
+                              textAlign: 'center',
+                              transition: 'all 0.2s ease'
+                            }}
+                          >
+                            {subtitleContent ? `✓ ${subtitleFileName}` : '📁 Upload SRT or VTT File'}
+                            <input
+                              type="file"
+                              accept=".srt,.vtt"
+                              style={{ display: 'none' }}
+                              onChange={(e) => {
+                                const file = e.target.files[0];
+                                if (file) {
+                                  const reader = new FileReader();
+                                  reader.onload = (event) => {
+                                    setSubtitleContent(event.target.result);
+                                    setSubtitleFileName(file.name);
+                                    setSubtitleEnabled(true);
+                                    setSubtitleDelay(0); // Reset delay when loading new file
+                                  };
+                                  reader.readAsText(file);
+                                }
+                                e.target.value = '';
+                              }}
+                            />
+                          </label>
+
+                          {subtitleContent && (
+                            <>
+                              {/* Enable/Disable Toggle */}
+                              <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <span style={{ fontSize: '0.8rem' }}>Show Subtitles</span>
+                                <button
+                                  onClick={() => setSubtitleEnabled(!subtitleEnabled)}
+                                  style={{
+                                    padding: '0.4rem 1rem',
+                                    background: subtitleEnabled ? 'rgba(34, 197, 94, 0.4)' : 'rgba(239, 68, 68, 0.3)',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    color: 'white',
+                                    cursor: 'pointer',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 'bold'
+                                  }}
+                                >
+                                  {subtitleEnabled ? 'ON' : 'OFF'}
+                                </button>
+                              </div>
+
+                              {/* Delay Adjustment */}
+                              <div style={{ marginTop: '0.75rem' }}>
+                                <div style={{ fontSize: '0.75rem', color: '#aaa', marginBottom: '0.4rem', display: 'flex', justifyContent: 'space-between' }}>
+                                  <span>⏱️ Sync Delay</span>
+                                  <span style={{
+                                    color: subtitleDelay === 0 ? '#888' : subtitleDelay > 0 ? '#22c55e' : '#f59e0b',
+                                    fontWeight: 'bold'
+                                  }}>
+                                    {subtitleDelay > 0 ? '+' : ''}{subtitleDelay} ms
+                                  </span>
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.25rem' }}>
+                                  <button
+                                    onClick={() => setSubtitleDelay(prev => prev - 500)}
+                                    style={{
+                                      flex: 1,
+                                      padding: '0.4rem',
+                                      background: 'rgba(239, 68, 68, 0.3)',
+                                      border: 'none',
+                                      borderRadius: '4px',
+                                      color: 'white',
+                                      cursor: 'pointer',
+                                      fontSize: '0.75rem'
+                                    }}
+                                  >
+                                    -500ms
+                                  </button>
+                                  <button
+                                    onClick={() => setSubtitleDelay(prev => prev - 100)}
+                                    style={{
+                                      flex: 1,
+                                      padding: '0.4rem',
+                                      background: 'rgba(239, 68, 68, 0.2)',
+                                      border: 'none',
+                                      borderRadius: '4px',
+                                      color: 'white',
+                                      cursor: 'pointer',
+                                      fontSize: '0.75rem'
+                                    }}
+                                  >
+                                    -100ms
+                                  </button>
+                                  <button
+                                    onClick={() => setSubtitleDelay(0)}
+                                    style={{
+                                      padding: '0.4rem 0.6rem',
+                                      background: 'rgba(255,255,255,0.1)',
+                                      border: 'none',
+                                      borderRadius: '4px',
+                                      color: 'white',
+                                      cursor: 'pointer',
+                                      fontSize: '0.75rem'
+                                    }}
+                                  >
+                                    Reset
+                                  </button>
+                                  <button
+                                    onClick={() => setSubtitleDelay(prev => prev + 100)}
+                                    style={{
+                                      flex: 1,
+                                      padding: '0.4rem',
+                                      background: 'rgba(34, 197, 94, 0.2)',
+                                      border: 'none',
+                                      borderRadius: '4px',
+                                      color: 'white',
+                                      cursor: 'pointer',
+                                      fontSize: '0.75rem'
+                                    }}
+                                  >
+                                    +100ms
+                                  </button>
+                                  <button
+                                    onClick={() => setSubtitleDelay(prev => prev + 500)}
+                                    style={{
+                                      flex: 1,
+                                      padding: '0.4rem',
+                                      background: 'rgba(34, 197, 94, 0.3)',
+                                      border: 'none',
+                                      borderRadius: '4px',
+                                      color: 'white',
+                                      cursor: 'pointer',
+                                      fontSize: '0.75rem'
+                                    }}
+                                  >
+                                    +500ms
+                                  </button>
+                                </div>
+                                <small style={{ fontSize: '0.65rem', color: '#666', marginTop: '0.25rem', display: 'block' }}>
+                                  Positive = subtitles appear later, Negative = earlier
+                                </small>
+                              </div>
+
+                              {/* Font Size */}
+                              <div style={{ marginTop: '0.75rem' }}>
+                                <div style={{ fontSize: '0.75rem', color: '#aaa', marginBottom: '0.4rem', display: 'flex', justifyContent: 'space-between' }}>
+                                  <span>🔤 Font Size</span>
+                                  <span>{subtitleFontSize}px</span>
+                                </div>
+                                <input
+                                  type="range"
+                                  min="14"
+                                  max="48"
+                                  value={subtitleFontSize}
+                                  onChange={(e) => setSubtitleFontSize(parseInt(e.target.value))}
+                                  style={{
+                                    width: '100%',
+                                    accentColor: '#6366f1'
+                                  }}
+                                />
+                              </div>
+
+                              {/* Clear Subtitles */}
+                              <button
+                                onClick={() => {
+                                  setSubtitleContent('');
+                                  setSubtitleFileName('');
+                                  setSubtitleDelay(0);
+                                }}
+                                style={{
+                                  width: '100%',
+                                  marginTop: '0.75rem',
+                                  padding: '0.5rem',
+                                  background: 'rgba(239, 68, 68, 0.3)',
+                                  border: 'none',
+                                  borderRadius: '4px',
+                                  color: 'white',
+                                  cursor: 'pointer',
+                                  fontSize: '0.8rem'
+                                }}
+                              >
+                                🗑️ Remove Subtitles
+                              </button>
+                            </>
+                          )}
+
+                          <small style={{ color: '#666', display: 'block', marginTop: '0.5rem', fontSize: '0.7rem' }}>
+                            SRT/VTT files are rendered as overlay. Use delay to sync subtitles with video.
                           </small>
+                        </div>
+
+                        {/* Legacy VTT URL Input (for browser-native subtitles) */}
+                        <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+                          <details style={{ color: '#888' }}>
+                            <summary style={{ fontSize: '0.7rem', cursor: 'pointer' }}>Advanced: VTT URL (no delay support)</summary>
+                            <input
+                              type="url"
+                              placeholder="Enter VTT URL..."
+                              value={subtitleUrl}
+                              onChange={(e) => setSubtitleUrl(e.target.value)}
+                              style={{
+                                width: '100%',
+                                padding: '0.4rem',
+                                marginTop: '0.5rem',
+                                background: 'rgba(255,255,255,0.1)',
+                                border: '1px solid rgba(255,255,255,0.2)',
+                                borderRadius: '4px',
+                                color: 'white',
+                                fontSize: '0.75rem'
+                              }}
+                            />
+                            {subtitleUrl && (
+                              <button
+                                onClick={() => setSubtitleUrl('')}
+                                style={{
+                                  width: '100%',
+                                  marginTop: '0.25rem',
+                                  padding: '0.3rem',
+                                  background: 'rgba(239, 68, 68, 0.2)',
+                                  border: 'none',
+                                  borderRadius: '4px',
+                                  color: '#999',
+                                  cursor: 'pointer',
+                                  fontSize: '0.7rem'
+                                }}
+                              >
+                                Clear URL
+                              </button>
+                            )}
+                          </details>
                         </div>
                       </div>
                     )}
