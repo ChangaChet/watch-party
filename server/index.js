@@ -60,9 +60,9 @@ app.get('/api/proxy-video', async (req, res) => {
         .outputOptions([
           '-c:v copy',
           '-c:a aac',
-          '-movflags frag_keyframe+empty_moov'
+          '-movflags frag_keyframe+empty_moov+default_base_moof',
+          '-f mp4'
         ])
-        .format('mp4')
         .on('error', (err) => {
           if (!err.message.includes('Output stream closed')) {
             console.error('FFmpeg error:', err.message);
