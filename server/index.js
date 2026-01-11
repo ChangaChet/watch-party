@@ -33,7 +33,7 @@ if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '../dist')));
 }
 
-// Video proxy endpoint - bypasses CORS for external video sources like Real-Debrid
+// Video proxy endpoint - bypasses CORS & Remuxes MKV to MP4
 app.get('/api/proxy-video', async (req, res) => {
   const videoUrl = req.query.url;
 
@@ -41,45 +41,69 @@ app.get('/api/proxy-video', async (req, res) => {
     return res.status(400).json({ error: 'Missing url parameter' });
   }
 
+  // Check if we need to remux (MKV files)
+  const isMkv = videoUrl.toLowerCase().includes('.mkv');
+
   try {
-    // Dynamically import node-fetch for streaming
-    const fetch = (await import('node-fetch')).default;
+    if (isMkv) {
+      console.log('Remuxing MKV stream via FFmpeg:', videoUrl);
 
-    // Forward the request to the external video URL
-    const response = await fetch(videoUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Range': req.headers.range || '',
-        'Referer': new URL(videoUrl).origin
-      }
-    });
+      // Dynamic import
+      const ffmpeg = (await import('fluent-ffmpeg')).default;
 
-    // Set CORS headers to allow browser access
-    res.set('Access-Control-Allow-Origin', '*');
-    res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.set('Access-Control-Allow-Headers', 'Range');
-    res.set('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
+      // Set headers for MP4 stream
+      res.set('Access-Control-Allow-Origin', '*');
+      res.set('Content-Type', 'video/mp4');
 
-    // Forward response headers
-    res.status(response.status);
-    if (response.headers.get('content-type')) {
-      res.set('Content-Type', response.headers.get('content-type'));
-    }
-    if (response.headers.get('content-length')) {
-      res.set('Content-Length', response.headers.get('content-length'));
-    }
-    if (response.headers.get('content-range')) {
-      res.set('Content-Range', response.headers.get('content-range'));
-    }
-    if (response.headers.get('accept-ranges')) {
-      res.set('Accept-Ranges', response.headers.get('accept-ranges'));
-    }
+      // Spawn FFmpeg to remux to fragmented MP4
+      const command = ffmpeg(videoUrl)
+        .outputOptions([
+          '-c:v copy',
+          '-c:a aac',
+          '-movflags frag_keyframe+empty_moov'
+        ])
+        .format('mp4')
+        .on('error', (err) => {
+          if (!err.message.includes('Output stream closed')) {
+            console.error('FFmpeg error:', err.message);
+          }
+        })
+        .pipe(res, { end: true });
 
-    // Pipe the video stream to the response
-    response.body.pipe(res);
+      req.on('close', () => {
+        try { command.kill(); } catch (e) { }
+      });
+
+    } else {
+      // Standard Proxy for MP4/WebM
+      const fetch = (await import('node-fetch')).default;
+
+      const response = await fetch(videoUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Range': req.headers.range || '',
+          'Referer': new URL(videoUrl).origin
+        }
+      });
+
+      res.set('Access-Control-Allow-Origin', '*');
+      res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+      res.set('Access-Control-Allow-Headers', 'Range');
+      res.set('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
+
+      res.status(response.status);
+      if (response.headers.get('content-type')) res.set('Content-Type', response.headers.get('content-type'));
+      if (response.headers.get('content-length')) res.set('Content-Length', response.headers.get('content-length'));
+      if (response.headers.get('content-range')) res.set('Content-Range', response.headers.get('content-range'));
+      if (response.headers.get('accept-ranges')) res.set('Accept-Ranges', response.headers.get('accept-ranges'));
+
+      response.body.pipe(res);
+    }
   } catch (error) {
     console.error('Proxy error:', error.message);
-    res.status(500).json({ error: 'Failed to fetch video', details: error.message });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to fetch video', details: error.message });
+    }
   }
 });
 
