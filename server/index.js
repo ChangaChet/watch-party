@@ -55,10 +55,12 @@ app.get('/api/proxy-video', async (req, res) => {
       res.set('Access-Control-Allow-Origin', '*');
       res.set('Content-Type', 'video/mp4');
 
-      // Spawn FFmpeg to remux to fragmented MP4
+      // Spawn FFmpeg to remux/transcode to fragmented MP4
       const command = ffmpeg(videoUrl)
         .outputOptions([
-          '-c:v copy',
+          '-c:v libx264',
+          '-preset ultrafast',
+          '-tune zerolatency',
           '-c:a aac',
           '-movflags frag_keyframe+empty_moov+default_base_moof',
           '-f mp4'
