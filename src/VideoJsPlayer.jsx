@@ -15,6 +15,7 @@ import 'video.js/dist/video-js.css';
  */
 const VideoJsPlayer = ({
     src,
+    type,
     isHLS = false,
     onPlay,
     onPause,
@@ -42,16 +43,21 @@ const VideoJsPlayer = ({
         if (!src || !videoContainerRef.current) return;
 
         // Determine source type
-        let sourceType = 'video/mp4';
-        if (isHLS || src.includes('.m3u8')) {
-            sourceType = 'application/x-mpegURL';
-        } else if (src.includes('.mpd')) {
-            sourceType = 'application/dash+xml';
-        } else if (src.includes('.webm')) {
-            sourceType = 'video/webm';
-        } else if (src.includes('.mkv')) {
-            // MKV isn't natively supported, but we can try
-            sourceType = 'video/x-matroska';
+        let sourceType = type || 'video/mp4';
+        if (!type) {
+            if (isHLS || src.includes('.m3u8')) {
+                sourceType = 'application/x-mpegURL';
+            } else if (src.includes('.mpd')) {
+                sourceType = 'application/dash+xml';
+            } else if (src.includes('.webm')) {
+                sourceType = 'video/webm';
+            } else if (src.includes('/api/proxy-video')) {
+                // Proxied video is always remuxed to MP4
+                sourceType = 'video/mp4';
+            } else if (src.includes('.mkv')) {
+                // MKV isn't natively supported, but we can try (or better yet, prevent this logic if we have proxy)
+                sourceType = 'video/x-matroska';
+            }
         }
 
         // Create video element
