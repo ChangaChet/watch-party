@@ -322,10 +322,25 @@ function App() {
           setTimeout(() => { isSyncingRef.current = false; }, 500);
         }, 1000); // Wait for player to be ready
       }
+
+      // Apply shared subtitle if present
+      if (data.subtitle) {
+        setSubtitleContent(data.subtitle.content);
+        setSubtitleFileName(data.subtitle.fileName);
+        setSubtitleEnabled(true);
+        addLog(`Loaded shared subtitle: ${data.subtitle.fileName}`);
+      }
     });
 
     socket.on('admin_updated', ({ adminId }) => setAdminId(adminId));
     socket.on('permissions_updated', ({ permissions }) => setPermissions(permissions));
+
+    socket.on('subtitle_shared', ({ subtitleContent, subtitleFileName, username }) => {
+      setSubtitleContent(subtitleContent);
+      setSubtitleFileName(subtitleFileName);
+      setSubtitleEnabled(true);
+      addLog(`${username} shared a subtitle: ${subtitleFileName}`);
+    });
 
     socket.on('reaction_received', ({ emoji }) => {
       const id = Date.now() + Math.random();
@@ -1843,6 +1858,16 @@ function App() {
                               setSubtitleFileName(fileName);
                               setSubtitleEnabled(true);
                               setSubtitleDelay(0);
+
+                              // Share with room
+                              socket.emit('share_subtitle', {
+                                roomId: roomIdRef.current,
+                                subtitleContent: content,
+                                subtitleFileName: fileName,
+                                username: usernameRef.current
+                              });
+                              addLog(`Shared subtitle: ${fileName}`);
+
                             } catch (err) {
                               console.error("Error processing subtitle file:", err);
                               alert("Failed to process subtitle file.");

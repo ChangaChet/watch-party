@@ -151,7 +151,8 @@ io.on('connection', (socket) => {
     if (!rooms.has(roomId)) {
       rooms.set(roomId, {
         playlist: [], currentIndex: 0, isPlaying: false, currentTime: 0,
-        users: [], messages: [], adminId: socket.id, permissions: 'open'
+        users: [], messages: [], adminId: socket.id, permissions: 'open',
+        subtitle: null // Shared subtitle state { content: string, fileName: string }
       });
     }
     const room = rooms.get(roomId);
@@ -231,6 +232,13 @@ io.on('connection', (socket) => {
   });
   socket.on('toggle_mute', ({ roomId, isMuted }) => socket.to(roomId).emit('user_muted', { userId: socket.id, isMuted }));
   socket.on('speaking_status', ({ roomId, isSpeaking }) => socket.to(roomId).emit('user_speaking', { userId: socket.id, isSpeaking }));
+  socket.on('share_subtitle', ({ roomId, subtitleContent, subtitleFileName, username }) => {
+    const room = rooms.get(roomId);
+    if (room) {
+      room.subtitle = { content: subtitleContent, fileName: subtitleFileName };
+      socket.to(roomId).emit('subtitle_shared', { subtitleContent, subtitleFileName, username });
+    }
+  });
   socket.on('toggle_permissions', ({ roomId }) => {
     const room = rooms.get(roomId);
     if (room && room.adminId === socket.id) { room.permissions = room.permissions === 'open' ? 'restricted' : 'open'; io.to(roomId).emit('permissions_updated', { permissions: room.permissions }); }
