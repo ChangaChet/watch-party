@@ -257,7 +257,8 @@ function App() {
     currentVideoUrl.includes('rdb.') ||
     currentVideoUrl.includes('alldebrid.') ||
     currentVideoUrl.includes('premiumize.') ||
-    currentVideoUrl.includes('debrid-link.')
+    currentVideoUrl.includes('debrid-link.') ||
+    currentVideoUrl.includes('torrentio.strem.fun')
   );
 
   // Get the actual video URL to use (proxy debrid links through server to bypass CORS)
