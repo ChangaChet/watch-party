@@ -51,7 +51,8 @@ app.get('/api/proxy-video', async (req, res) => {
       // 1. Fetch the source stream (follow redirects)
       const sourceResponse = await fetch(videoUrl, {
         headers: {
-          'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18' // Mimic VLC to ensure stream delivery
+          'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18',
+          'Referer': 'https://real-debrid.com/'
         }
       });
 
