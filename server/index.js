@@ -129,8 +129,12 @@ app.get('/api/proxy-video', async (req, res) => {
     }
 
   } catch (error) {
-    console.error('Proxy Fatal Error:', error);
-    if (!res.headersSent) res.status(500).json({ error: error.message });
+    console.error('Proxy Fatal Error:', error.message);
+    if (!res.headersSent) {
+      // Fallback: Redirect to original URL so browser attempts direct playback
+      // This mitigates the IP Blocking issue on Render by letting the user's browser take over
+      return res.redirect(videoUrl);
+    }
   }
 });
 
