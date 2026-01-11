@@ -74,6 +74,7 @@ app.get('/api/proxy-video', async (req, res) => {
 
       // Spawn FFmpeg to remux/transcode to fragmented MP4
       const command = ffmpeg(sourceResponse.body)
+        .inputFormat('matroska') // Explicitly tell FFmpeg this is MKV/Matroska stream
         .outputOptions([
           '-c:v libx264',
           '-preset ultrafast',
@@ -85,8 +86,10 @@ app.get('/api/proxy-video', async (req, res) => {
         .on('start', (cmdLine) => console.log('FFmpeg started:', cmdLine))
         .on('codecData', (data) => console.log('FFmpeg codec data:', data))
         .on('error', (err) => {
-          if (!err.message.includes('Output stream closed')) {
-            console.error('FFmpeg error:', err.message);
+          console.error('FFmpeg error:', err.message);
+          // Only attempt to send error header if not already sent
+          if (!res.headersSent) {
+            res.status(500).end();
           }
         })
         .pipe(res, { end: true });
