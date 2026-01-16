@@ -116,15 +116,34 @@ app.get('/api/proxy-video', async (req, res) => {
       });
 
     } else {
-      // Standard Proxy for non-MKV
+      // Standard Proxy for non-MKV with Range Support
       const fetch = (await import('node-fetch')).default;
-      const response = await fetch(videoUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 ...' }
-      });
-      res.writeHead(response.status, {
+      const headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      };
+
+      // Forward Range header if present
+      if (req.headers.range) {
+        headers['Range'] = req.headers.range;
+      }
+
+      const response = await fetch(videoUrl, { headers });
+
+      // Forward key response headers
+      const responseHeaders = {
         'Access-Control-Allow-Origin': '*',
-        'Content-Type': response.headers.get('content-type') || 'video/mp4'
-      });
+        'Content-Type': response.headers.get('content-type') || 'video/mp4',
+        'Accept-Ranges': 'bytes'
+      };
+
+      if (response.headers.has('content-length')) {
+        responseHeaders['Content-Length'] = response.headers.get('content-length');
+      }
+      if (response.headers.has('content-range')) {
+        responseHeaders['Content-Range'] = response.headers.get('content-range');
+      }
+
+      res.writeHead(response.status, responseHeaders);
       response.body.pipe(res);
     }
 
