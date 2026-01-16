@@ -143,6 +143,97 @@ app.options('/api/proxy-video', (req, res) => {
   res.status(204).send();
 });
 
+// Stremio-based Free Subtitles Proxy
+app.get('/api/opensubtitles/search', async (req, res) => {
+  const { query } = req.query;
+
+  if (!query) {
+    return res.status(400).json({ error: 'Missing query' });
+  }
+
+  try {
+    const fetch = (await import('node-fetch')).default;
+
+    // 1. Search Cinemeta to get IMDb ID
+    const metaUrl = `https://v3-cinemeta.strem.io/catalog/movie/top/search=${encodeURIComponent(query)}.json`;
+    console.log('Fetching Meta:', metaUrl);
+
+    const metaRes = await fetch(metaUrl);
+    if (!metaRes.ok) throw new Error('Meta fetch failed');
+    const metaData = await metaRes.json();
+
+    if (!metaData.metas || metaData.metas.length === 0) {
+      return res.json({ data: [] });
+    }
+
+    // Use the best match (first result)
+    const meta = metaData.metas[0];
+    const imdbId = meta.imdb_id;
+    const movieTitle = meta.name + (meta.releaseInfo ? ` (${meta.releaseInfo})` : '');
+
+    // 2. Fetch Subtitles from Stremio OpenSubtitles v3 Addon
+    const subUrl = `https://opensubtitles-v3.strem.io/subtitles/movie/${imdbId}.json`;
+    console.log('Fetching Subs:', subUrl);
+
+    const subRes = await fetch(subUrl);
+    if (!subRes.ok) throw new Error('Subtitle fetch failed');
+    const subData = await subRes.json();
+
+    // Map Stremio format to our UI expectation
+    const subtitles = (subData.subtitles || []).map((sub, idx) => ({
+      id: sub.id || idx,
+      attributes: {
+        feature_details: {
+          title: movieTitle,
+          year: meta.releaseInfo
+        },
+        language: sub.lang,
+        upload_date: new Date().toISOString(),
+        files: [{
+          file_id: idx,
+          file_name: `Subtitle ${sub.lang} (OpenSubtitles)`,
+          download_url: sub.url
+        }]
+      }
+    }));
+
+    // Prioritize English
+    const engSubs = subtitles.filter(s => s.attributes.language.startsWith('eng'));
+    const otherSubs = subtitles.filter(s => !s.attributes.language.startsWith('eng'));
+
+    res.json({ data: [...engSubs, ...otherSubs] });
+
+  } catch (error) {
+    console.error('Proxy Search Error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.post('/api/opensubtitles/download', async (req, res) => {
+  const { url } = req.body;
+
+  if (!url) {
+    return res.status(400).json({ error: 'Missing url' });
+  }
+
+  try {
+    const fetch = (await import('node-fetch')).default;
+
+    console.log('Proxying subtitle download:', url);
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch subtitle file: ${response.status}`);
+    }
+
+    const content = await response.text();
+    res.json({ content });
+
+  } catch (error) {
+    console.error('Proxy Download Error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
 // Socket Logic ...
 const rooms = new Map();
 io.on('connection', (socket) => {

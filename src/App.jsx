@@ -8,6 +8,8 @@ import SrtToVttConverter, { convertSrtToVtt } from './SrtToVttConverter';
 import SubtitleOverlay from './SubtitleOverlay';
 import VideoJsPlayer from './VideoJsPlayer';
 
+import SubtitleSearchModal from './components/SubtitleSearchModal';
+
 const SOCKET_URL = import.meta.env.PROD
   ? window.location.origin
   : 'http://localhost:3001';
@@ -201,8 +203,10 @@ function App() {
   const [showTrackMenu, setShowTrackMenu] = useState(false);
   const [subtitleUrl, setSubtitleUrl] = useState(''); // External VTT subtitle URL
   const [showConverter, setShowConverter] = useState(false); // SRT to VTT converter modal
+  const [showSearchModal, setShowSearchModal] = useState(false); // OpenSubtitles search modal
   const [debugLogs, setDebugLogs] = useState([]);
   const [showDebug, setShowDebug] = useState(false);
+
 
   // Subtitle overlay settings
   const [subtitleContent, setSubtitleContent] = useState(''); // Raw SRT/VTT content
@@ -1465,6 +1469,44 @@ function App() {
     }
   };
 
+  const handleOpenSearchModal = () => {
+    setShowSearchModal(true);
+  };
+
+  const handleSelectSubtitle = (content, fileName) => {
+    // Convert to VTT if needed (OpenSubtitles usually returns SRT)
+    let vttContent = content;
+    // Simple check: if it doesn't start with WEBVTT, assume it needs conversion
+    if (!content.trim().startsWith('WEBVTT')) {
+      try {
+        vttContent = convertSrtToVtt(content);
+      } catch (e) {
+        console.error("Conversion error:", e);
+        // Fallback: try using it as is, or alert user
+      }
+    }
+
+    // Create a blob URL for the player track
+    const blob = new Blob([vttContent], { type: 'text/vtt' });
+    const url = URL.createObjectURL(blob);
+
+    // Update local state
+    setSubtitleUrl(url);
+    setSubtitleContent(vttContent);
+    setSubtitleFileName(fileName);
+    setSubtitleEnabled(true);
+
+    // Share with room
+    socket.emit('share_subtitle', {
+      roomId: roomIdRef.current,
+      subtitleContent: vttContent,
+      subtitleFileName: fileName,
+      username
+    });
+
+    addLog('Subtitle loaded and shared:', fileName);
+  };
+
   const handleVideoPlay = () => {
     if (isSyncingRef.current) return; // Don't emit if we're syncing from another user
     const currentTime = videoRef.current ? videoRef.current.currentTime : 0;
@@ -2184,6 +2226,24 @@ function App() {
                   {emoji}
                 </button>
               ))}
+              <button
+                onClick={handleOpenSearchModal}
+                style={{
+                  background: 'rgba(99, 102, 241, 0.2)',
+                  border: '1px solid rgba(99, 102, 241, 0.5)',
+                  color: '#fff',
+                  borderRadius: '4px',
+                  padding: '0 8px',
+                  cursor: 'pointer',
+                  fontSize: '0.8rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+                title="Search Subtitles"
+              >
+                🔍 Subs
+              </button>
             </div>
 
             <div style={{ fontSize: '10px', color: '#aaa' }}>
@@ -2545,6 +2605,20 @@ function App() {
       >
         {showDebug ? 'Hide Debug' : 'Show Debug'}
       </button>
+
+      {/* Subtitle Search Modal */}
+      <SubtitleSearchModal
+        isOpen={showSearchModal}
+        onClose={() => setShowSearchModal(false)}
+        defaultQuery={(() => {
+          const url = playlist[currentIndex] || '';
+          try {
+            const filename = url.split('/').pop().split('?')[0];
+            return filename.replace(/\.(mp4|mkv|avi|m3u8|webm)$/i, '').replace(/[._-]/g, ' ');
+          } catch { return ''; }
+        })()}
+        onSelectSubtitle={handleSelectSubtitle}
+      />
     </div >
   );
 }
