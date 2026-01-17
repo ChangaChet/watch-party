@@ -111,14 +111,10 @@ const ArtPlayerComponent = ({
             name: 'Subtitles',
         }] : [];
 
-        // Initialize ArtPlayer
-        const art = new Artplayer({
+        // Build ArtPlayer options - only add HLS config when needed
+        const artOptions = {
             container: artContainerRef.current,
             url: src,
-            type: isHlsStream ? 'm3u8' : undefined,
-            customType: isHlsStream ? {
-                m3u8: playM3u8,
-            } : undefined,
             volume: 0.7,
             isLive: false,
             muted: false,
@@ -142,7 +138,6 @@ const ArtPlayerComponent = ({
             autoPlayback: true,
             airplay: true,
             theme: '#6366f1', // Indigo to match app theme
-            subtitle: subtitles.length > 0 ? subtitles[0] : undefined,
             settings: [
                 {
                     name: 'quality',
@@ -151,10 +146,23 @@ const ArtPlayerComponent = ({
                     selector: [],
                 },
             ],
-            icons: {
-                loading: '<div class="art-loading-icon"></div>',
-            },
-        });
+        };
+
+        // Add HLS-specific options only when needed
+        if (isHlsStream) {
+            artOptions.type = 'm3u8';
+            artOptions.customType = {
+                m3u8: playM3u8,
+            };
+        }
+
+        // Add subtitle if provided
+        if (subtitles.length > 0) {
+            artOptions.subtitle = subtitles[0];
+        }
+
+        // Initialize ArtPlayer
+        const art = new Artplayer(artOptions);
 
         artRef.current = art;
 
