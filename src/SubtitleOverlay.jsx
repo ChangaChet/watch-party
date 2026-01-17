@@ -1,10 +1,34 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 
 /**
  * SubtitleOverlay Component
  * Renders SRT/VTT subtitles as an overlay on top of the video
  * with adjustable sync delay, font size, and positioning
  */
+
+// Parse time string to seconds
+const parseTime = (timeStr) => {
+    // Handle either , or . as decimal separator
+    const normalized = timeStr.replace(',', '.');
+    // If the decimal separator was a colon (rare/invalid), it might cause issues with splitting by colon.
+    // However, the standard split logic follows:
+    const parts = normalized.split(':');
+
+    if (parts.length === 3) {
+        // HH:MM:SS.mmm
+        const [hours, minutes, secondsMs] = parts;
+        const [seconds, ms] = secondsMs.split('.');
+        return parseInt(hours) * 3600 + parseInt(minutes) * 60 + parseInt(seconds) + (parseInt(ms || 0) / 1000);
+    } else if (parts.length === 2) {
+        // MM:SS.mmm
+        const [minutes, secondsMs] = parts;
+        const [seconds, ms] = secondsMs.split('.');
+        return parseInt(minutes) * 60 + parseInt(seconds) + (parseInt(ms || 0) / 1000);
+    }
+
+    return 0;
+};
+
 const SubtitleOverlay = ({
     videoRef,
     subtitleContent,
@@ -16,7 +40,6 @@ const SubtitleOverlay = ({
     enabled = true
 }) => {
     const [currentSubtitle, setCurrentSubtitle] = useState('');
-    const [parsedCues, setParsedCues] = useState([]);
     const animationFrameRef = useRef(null);
 
     // Parse SRT format
@@ -103,32 +126,13 @@ const SubtitleOverlay = ({
         return cues;
     }, []);
 
-    // Parse time string to seconds
-    const parseTime = (timeStr) => {
-        // Handle either , or . as decimal separator
-        const normalized = timeStr.replace(',', '.').replace(':', ':',);
-        const parts = normalized.split(':');
 
-        if (parts.length === 3) {
-            // HH:MM:SS.mmm
-            const [hours, minutes, secondsMs] = parts;
-            const [seconds, ms] = secondsMs.split('.');
-            return parseInt(hours) * 3600 + parseInt(minutes) * 60 + parseInt(seconds) + (parseInt(ms || 0) / 1000);
-        } else if (parts.length === 2) {
-            // MM:SS.mmm
-            const [minutes, secondsMs] = parts;
-            const [seconds, ms] = secondsMs.split('.');
-            return parseInt(minutes) * 60 + parseInt(seconds) + (parseInt(ms || 0) / 1000);
-        }
-
-        return 0;
-    };
 
     // Parse subtitle content when it changes
-    useEffect(() => {
+    // Parse subtitle content when it changes
+    const parsedCues = useMemo(() => {
         if (!subtitleContent) {
-            setParsedCues([]);
-            return;
+            return [];
         }
 
         let cues;
@@ -139,13 +143,13 @@ const SubtitleOverlay = ({
         }
 
         console.log('Parsed subtitle cues:', cues.length);
-        setParsedCues(cues);
+        return cues;
     }, [subtitleContent, parseSRT, parseVTT]);
 
     // Update current subtitle based on video time
     useEffect(() => {
         if (!videoRef?.current || parsedCues.length === 0 || !enabled) {
-            setCurrentSubtitle('');
+            setCurrentSubtitle(prev => prev ? '' : prev); // eslint-disable-line react-hooks/set-state-in-effect
             return;
         }
 
@@ -167,7 +171,7 @@ const SubtitleOverlay = ({
                     // Native video element
                     currentTime = player.currentTime;
                 }
-            } catch (e) {
+            } catch {
                 // Player might be disposed
                 return;
             }

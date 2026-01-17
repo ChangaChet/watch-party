@@ -153,7 +153,37 @@ const VideoJsPlayer = ({
             }
         });
 
-        player.on('error', (e) => {
+        player.on('seeking', () => {
+            if (isSyncingRef.current) return;
+
+            // Handle seeking for proxied streams
+            const src = player.src();
+            if (src && src.includes('/api/proxy-video')) {
+                const currentTime = player.currentTime();
+
+                // If the user seeks, we want to reload the stream from that point
+                // But we must debounce it heavily and avoid loops
+
+                const url = new URL(src, window.location.origin);
+                const currentStartTime = parseFloat(url.searchParams.get('startTime') || '0');
+
+                // Debounce the seek action
+                if (player.seekTimeout) clearTimeout(player.seekTimeout);
+
+                player.seekTimeout = setTimeout(() => {
+                    // Only seek if we are far enough from 0 (meaning user scrubbed)
+                    // or if we are just starting and need to get to a point (handled by backend usually)
+                    if (currentTime > 0.5) {
+                        console.log('Seeking proxy stream to:', currentTime);
+                        url.searchParams.set('startTime', currentTime + currentStartTime);
+                        player.src({ type: 'video/mp4', src: url.toString() });
+                        player.play();
+                    }
+                }, 500); // 500ms debounce
+            }
+        });
+
+        player.on('error', () => {
             console.error('Video.js error:', player.error());
             onError?.(player.error());
         });
@@ -168,7 +198,7 @@ const VideoJsPlayer = ({
                 }
             }
         };
-    }, [src]); // Only reinitialize when src changes
+    }, [src]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Update subtitle track when URL changes
     useEffect(() => {

@@ -4,9 +4,10 @@ import Hls from 'hls.js';
 import './App.css';
 import './VideoJsTheme.css';
 import JSZip from 'jszip';
-import SrtToVttConverter, { convertSrtToVtt } from './SrtToVttConverter';
+import SrtToVttConverter from './SrtToVttConverter';
+import { convertSrtToVtt } from './utils/subtitleConverter';
 import SubtitleOverlay from './SubtitleOverlay';
-import VideoJsPlayer from './VideoJsPlayer';
+import ArtPlayerComponent from './ArtPlayer';
 
 import SubtitleSearchModal from './components/SubtitleSearchModal';
 
@@ -17,7 +18,7 @@ const SOCKET_URL = import.meta.env.PROD
 const socket = io(SOCKET_URL);
 
 const extractYouTubeId = (url) => {
-  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
   const match = url.match(regExp);
   return (match && match[2].length === 11) ? match[2] : null;
 };
@@ -31,7 +32,7 @@ const VideoPlayer = ({ stream, muted = false }) => {
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !stream) {
-      setHasVideo(false);
+      setHasVideo(false); // eslint-disable-line react-hooks/set-state-in-effect
       return;
     }
 
@@ -73,7 +74,7 @@ const VideoPlayer = ({ stream, muted = false }) => {
       if (!isEnabled) {
         setHasVideo(false);
         setError('Camera Off');
-        if (audioTracks.length > 0) {
+        if (stream.getAudioTracks().length > 0) {
           attemptPlay();
         }
       } else if (!isLive) {
@@ -224,13 +225,13 @@ function App() {
         if (typeof a === 'object') {
           try {
             return JSON.stringify(a);
-          } catch (e) {
+          } catch {
             return '[Object]';
           }
         }
         return String(a);
       }).join(' ');
-    } catch (e) {
+    } catch {
       argsStr = '...';
     }
 
@@ -647,7 +648,7 @@ function App() {
       socket.off('request_sync');
       socket.off('chat_message');
     };
-  }, []); // Run only once
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load YouTube API
   useEffect(() => {
@@ -1404,7 +1405,7 @@ function App() {
 
     try {
       new URL(videoUrl);
-    } catch (_) {
+    } catch {
       alert("Please enter a valid URL (e.g., https://youtube.com/...)");
       return;
     }
@@ -1594,8 +1595,8 @@ function App() {
                   <div id="youtube-player" style={{ width: '100%', height: '100%' }}></div>
                 ) : useVideoJs ? (
                   <>
-                    {/* Video.js Player */}
-                    <VideoJsPlayer
+                    {/* ArtPlayer */}
+                    <ArtPlayerComponent
                       src={videoSrc}
                       isHLS={isHLS && !isDebridLink}
                       playerRef={videojsPlayerRef}
@@ -1618,18 +1619,15 @@ function App() {
                           socket.emit('sync_action', { roomId: roomIdRef.current, action: 'seek', data: { currentTime, isPlaying: isPlayingRef.current } });
                         }
                       }}
-                      onReady={(player) => {
-                        console.log('Video.js player ready');
+                      onReady={() => {
+                        console.log('ArtPlayer ready');
                         setVideoError(null);
                         // Ask for sync time
                         socket.emit('ask_for_time', { roomId: roomIdRef.current });
                       }}
                       onError={(error) => {
-                        console.error('Video.js error:', error);
+                        console.error('ArtPlayer error:', error);
                         let errorMsg = 'Failed to load video';
-                        if (error?.code === 4) {
-                          errorMsg = 'Video format not supported. Try a different source.';
-                        }
                         setVideoError(errorMsg);
                       }}
                     />

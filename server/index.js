@@ -1,3 +1,4 @@
+/* global process */
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -5,6 +6,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
+import ffmpegPath from 'ffmpeg-static';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,6 +38,7 @@ if (process.env.NODE_ENV === 'production') {
 // Low-level FFmpeg Proxy using spawn for maximum control
 app.get('/api/proxy-video', async (req, res) => {
   const videoUrl = req.query.url;
+  const startTime = req.query.startTime;
 
   if (!videoUrl) {
     return res.status(400).json({ error: 'Missing url parameter' });
@@ -45,62 +48,59 @@ app.get('/api/proxy-video', async (req, res) => {
 
   try {
     if (isMkv) {
-      console.log('Spawning FFmpeg (Direct Pipe) for:', videoUrl);
+      console.log('Spawning FFmpeg (Direct URL) for:', videoUrl);
+
+      // 2. Validate URL and get headers
       const fetch = (await import('node-fetch')).default;
-
-      // 1. Fetch the source stream (follow redirects)
-      const sourceResponse = await fetch(videoUrl, {
-        headers: {
-          'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18',
-          'Referer': 'https://real-debrid.com/'
-        }
-      });
-
-      if (!sourceResponse.ok) {
-        throw new Error(`Source fetch failed: ${sourceResponse.status} ${sourceResponse.statusText}`);
+      const checkRes = await fetch(videoUrl, { method: 'HEAD', headers: { 'User-Agent': 'VLC/3.0.18' } });
+      if (!checkRes.ok) {
+        console.error('Remote URL check failed:', checkRes.status);
+        return res.status(502).send('Upstream source failed');
       }
 
-      console.log('Source Content-Type:', sourceResponse.headers.get('content-type'));
-      console.log('Final URL:', sourceResponse.url);
-
-      // 2. Set Response Headers
+      // 3. Set Response Headers
       res.writeHead(200, {
         'Access-Control-Allow-Origin': '*',
         'Content-Type': 'video/mp4',
         'Connection': 'keep-alive'
       });
 
-      // 3. Spawn FFmpeg Process
+      // 4. Spawn FFmpeg Process
+      const headers = 'User-Agent: VLC/3.0.18 LibVLC/3.0.18\r\nReferer: https://real-debrid.com/';
+
       const ffmpegArgs = [
-        '-i', 'pipe:0', // Input from Stdin
+        '-headers', headers,
+        ...(startTime ? ['-ss', String(startTime)] : []), // Seek on input (fast)
+        '-i', videoUrl,
         '-c:v', 'libx264',
+        // '-copyts', // Removed - caused playback issues with some players
         '-preset', 'ultrafast',
         '-tune', 'zerolatency',
         '-profile:v', 'main',
-        '-pix_fmt', 'yuv420p', // Force 8-bit color output (Fixes black screen/compatibility)
+        '-pix_fmt', 'yuv420p',
         '-c:a', 'aac',
         '-ar', '44100',
         '-ac', '2',
         '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
         '-f', 'mp4',
-        'pipe:1' // Output to Stdout
+        'pipe:1'
       ];
 
-      const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+      const ffmpegProcess = spawn(ffmpegPath, ffmpegArgs);
 
-      // 4. Pipe Fetch Body -> FFmpeg Stdin
-      sourceResponse.body.pipe(ffmpegProcess.stdin);
+      ffmpegProcess.on('error', (err) => {
+        console.error('Failed to spawn FFmpeg:', err);
+        if (!res.headersSent) {
+          res.status(500).send('FFmpeg failed to start');
+        }
+      });
 
       // 5. Pipe FFmpeg Stdout -> Response
       ffmpegProcess.stdout.pipe(res);
 
       // 6. Error Handling & logging
       ffmpegProcess.stderr.on('data', (data) => {
-        const msg = data.toString();
-        // Console log mostly errors or startup
-        if (msg.includes('Error') || msg.includes('Invalid') || msg.includes('Stream #')) {
-          console.log('FFmpeg:', msg.substring(0, 200));
-        }
+        console.log('FFmpeg:', data.toString()); // Log EVERYTHING for debug
       });
 
       ffmpegProcess.on('close', (code) => {
@@ -112,7 +112,6 @@ app.get('/api/proxy-video', async (req, res) => {
       req.on('close', () => {
         console.log('Client disconnected, killing FFmpeg');
         ffmpegProcess.kill();
-        sourceResponse.body.unpipe(); // Stop fetching
       });
 
     } else {
