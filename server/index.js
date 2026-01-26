@@ -72,29 +72,19 @@ app.get('/api/proxy-video', async (req, res) => {
       });
 
       // 3. Spawn FFmpeg Process
-      // Note: We avoid strict -map 0:a:0 because some files might use stream 1 for audio or have multiple.
-      // Instead, we let FFmpeg auto-select the best audio stream but enforce AAC encoding.
+      // Pass the URL directly to FFmpeg instead of piping.
+      // This often handles seeking, headers, and protocol quirks better than node-fetch piping.
       const ffmpegArgs = [
-        '-i', 'pipe:0',
-        '-c:v', 'copy', // TRY COPY FIRST for video to save CPU/Latency (if compatible)
-        // If copy fails or we need to transcode, we might need a fallback.
-        // But for now, let's try standard transcode to be safe since copy can fail on mkv->mp4
-      ];
-
-      // Revert to transcode but make it robust
-      const robustArgs = [
-        '-i', 'pipe:0',
+        '-headers', `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\nReferer: https://real-debrid.com/\r\n`,
+        '-i', videoUrl,
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
         '-tune', 'zerolatency',
         '-profile:v', 'main',
         '-y',
         '-pix_fmt', 'yuv420p',
-        // Audio Settings - Critical
         '-c:a', 'aac',
-        '-strict', 'experimental', // Sometimes needed/helpful
-        '-b:a', '192k',
-        '-ar', '48000', // Standard for video
+        '-b:a', '128k',
         '-ac', '2',
         '-af', 'aresample=async=1',
         '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
@@ -102,10 +92,11 @@ app.get('/api/proxy-video', async (req, res) => {
         'pipe:1'
       ];
 
-      const ffmpegProcess = spawn('ffmpeg', robustArgs);
+      console.log('Spawning FFmpeg (Direct URL) for:', videoUrl);
+      const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
 
-      // 4. Pipe Fetch Body -> FFmpeg Stdin
-      sourceResponse.body.pipe(ffmpegProcess.stdin);
+      // 4. Pipe FFmpeg Stdout -> Response (No Input Pipe needed)
+      // sourceResponse.body.pipe(ffmpegProcess.stdin); // REMOVED
 
       // 5. Pipe FFmpeg Stdout -> Response
       ffmpegProcess.stdout.pipe(res);
