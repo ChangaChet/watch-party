@@ -71,26 +71,37 @@ app.get('/api/proxy-video', async (req, res) => {
       });
 
       // 3. Spawn FFmpeg Process
+      // Note: We avoid strict -map 0:a:0 because some files might use stream 1 for audio or have multiple.
+      // Instead, we let FFmpeg auto-select the best audio stream but enforce AAC encoding.
       const ffmpegArgs = [
-        '-i', 'pipe:0', // Input from Stdin
-        '-map', '0:v:0', // Map first video stream
-        '-map', '0:a:0', // Map first audio stream
+        '-i', 'pipe:0',
+        '-c:v', 'copy', // TRY COPY FIRST for video to save CPU/Latency (if compatible)
+        // If copy fails or we need to transcode, we might need a fallback.
+        // But for now, let's try standard transcode to be safe since copy can fail on mkv->mp4
+      ];
+
+      // Revert to transcode but make it robust
+      const robustArgs = [
+        '-i', 'pipe:0',
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
         '-tune', 'zerolatency',
         '-profile:v', 'main',
-        '-pix_fmt', 'yuv420p', // Force 8-bit color output (Fixes black screen/compatibility)
+        '-y',
+        '-pix_fmt', 'yuv420p',
+        // Audio Settings - Critical
         '-c:a', 'aac',
-        '-b:a', '128k',
-        '-ar', '44100',
+        '-strict', 'experimental', // Sometimes needed/helpful
+        '-b:a', '192k',
+        '-ar', '48000', // Standard for video
         '-ac', '2',
         '-af', 'aresample=async=1',
         '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
         '-f', 'mp4',
-        'pipe:1' // Output to Stdout
+        'pipe:1'
       ];
 
-      const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+      const ffmpegProcess = spawn('ffmpeg', robustArgs);
 
       // 4. Pipe Fetch Body -> FFmpeg Stdin
       sourceResponse.body.pipe(ffmpegProcess.stdin);
@@ -101,9 +112,12 @@ app.get('/api/proxy-video', async (req, res) => {
       // 6. Error Handling & logging
       ffmpegProcess.stderr.on('data', (data) => {
         const msg = data.toString();
-        // Console log mostly errors or startup
-        if (msg.includes('Error') || msg.includes('Invalid') || msg.includes('Stream #')) {
-          console.log('FFmpeg:', msg.substring(0, 200));
+        // Log stream info to see what FFmpeg detects
+        if (msg.includes('Stream #') || msg.includes('Audio')) {
+          console.log('FFmpeg Detect:', msg.substring(0, 300));
+        }
+        if (msg.includes('Error') || msg.includes('Invalid')) {
+          console.log('FFmpeg Error:', msg.substring(0, 200));
         }
       });
 
