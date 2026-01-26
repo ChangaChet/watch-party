@@ -73,6 +73,8 @@ app.get('/api/proxy-video', async (req, res) => {
       // 3. Spawn FFmpeg Process
       const ffmpegArgs = [
         '-i', 'pipe:0', // Input from Stdin
+        '-map', '0:v:0', // Map first video stream
+        '-map', '0:a:0', // Map first audio stream
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
         '-tune', 'zerolatency',
