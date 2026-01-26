@@ -48,21 +48,8 @@ app.get('/api/proxy-video', async (req, res) => {
       console.log('Spawning FFmpeg (Direct Pipe) for:', videoUrl);
       const fetch = (await import('node-fetch')).default;
 
-      // 1. Fetch the source stream (follow redirects)
-      const sourceResponse = await fetch(videoUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Referer': 'https://real-debrid.com/',
-          'Origin': 'https://real-debrid.com'
-        }
-      });
-
-      if (!sourceResponse.ok) {
-        throw new Error(`Source fetch failed: ${sourceResponse.status} ${sourceResponse.statusText}`);
-      }
-
-      console.log('Source Content-Type:', sourceResponse.headers.get('content-type'));
-      console.log('Final URL:', sourceResponse.url);
+      // 1. Log Info
+      console.log('Proxying MKV via FFmpeg:', videoUrl);
 
       // 2. Set Response Headers
       res.writeHead(200, {
@@ -70,6 +57,8 @@ app.get('/api/proxy-video', async (req, res) => {
         'Content-Type': 'video/mp4',
         'Connection': 'keep-alive'
       });
+
+
 
       // 3. Spawn FFmpeg Process
       // Pass the URL directly to FFmpeg instead of piping.
@@ -119,10 +108,10 @@ app.get('/api/proxy-video', async (req, res) => {
       });
 
       // Handle Client Disconnect
+      // Handle Client Disconnect
       req.on('close', () => {
         console.log('Client disconnected, killing FFmpeg');
         ffmpegProcess.kill();
-        sourceResponse.body.unpipe(); // Stop fetching
       });
 
     } else {
