@@ -67,7 +67,7 @@ app.get('/api/proxy-video', async (req, res) => {
         '-headers', `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\nReferer: https://real-debrid.com/\r\n`,
         '-i', videoUrl,
         '-c:v', 'libx264',
-        '-c:v', 'libx264',
+
         '-preset', 'veryfast', // Slightly better compression/stability than ultrafast
         '-g', '60', // Keyframe interval (crucial for streaming)
         '-sc_threshold', '0',
