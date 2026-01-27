@@ -250,9 +250,15 @@ function App() {
   const currentVideoUrl = playlist[currentIndex];
   const isYouTube = currentVideoUrl && (currentVideoUrl.includes('youtube.com') || currentVideoUrl.includes('youtu.be'));
   const isHLS = currentVideoUrl && (currentVideoUrl.includes('.m3u8') || currentVideoUrl.includes('m3u8'));
+  const is111Movies = currentVideoUrl && (currentVideoUrl.includes('111movies.com') || currentVideoUrl.match(/^tt\d+/));
+  const isEmbed = is111Movies;
 
   // Get the actual video URL to use
-  const videoSrc = currentVideoUrl;
+  let videoSrc = currentVideoUrl;
+  if (is111Movies && currentVideoUrl.match(/^tt\d+/)) {
+    // If just an IMDB ID, default to movie embed
+    videoSrc = `https://111movies.com/movie/${currentVideoUrl}`;
+  }
 
   // Update refs when state changes
   useEffect(() => {
@@ -1513,7 +1519,34 @@ function App() {
           <div className="player-wrapper">
             {currentVideoUrl ? (
               <div className="player-container">
-                {isYouTube ? (
+                {isEmbed ? (
+                  <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+                    <iframe
+                      src={videoSrc}
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        border: 'none',
+                        backgroundColor: '#000'
+                      }}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                    />
+                    <div style={{
+                      position: 'absolute',
+                      bottom: '10px',
+                      left: '10px',
+                      background: 'rgba(0,0,0,0.7)',
+                      color: 'white',
+                      padding: '5px 10px',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      pointerEvents: 'none'
+                    }}>
+                      ⚠️ Syncing limited for external embeds
+                    </div>
+                  </div>
+                ) : isYouTube ? (
                   <div id="youtube-player" style={{ width: '100%', height: '100%' }}></div>
                 ) : useVideoJs ? (
                   <>
