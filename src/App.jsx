@@ -251,28 +251,8 @@ function App() {
   const isYouTube = currentVideoUrl && (currentVideoUrl.includes('youtube.com') || currentVideoUrl.includes('youtu.be'));
   const isHLS = currentVideoUrl && (currentVideoUrl.includes('.m3u8') || currentVideoUrl.includes('m3u8'));
 
-  // Detect Real-Debrid and other debrid service links (they often have CORS issues)
-  const isDebridLink = currentVideoUrl && (
-    currentVideoUrl.includes('real-debrid.com') ||
-    currentVideoUrl.includes('rd.') ||
-    currentVideoUrl.includes('rdb.') ||
-    currentVideoUrl.includes('alldebrid.') ||
-    currentVideoUrl.includes('premiumize.') ||
-    currentVideoUrl.includes('debrid-link.') ||
-    currentVideoUrl.includes('torrentio.strem.fun')
-  );
-
-  // Get the actual video URL to use (proxy debrid links through server to bypass CORS)
-  const getVideoSrc = () => {
-    if (!currentVideoUrl) return null;
-    if (isDebridLink) {
-      // Route through server proxy to bypass CORS
-      const baseUrl = import.meta.env.PROD ? '' : 'http://localhost:3001';
-      return `${baseUrl}/api/proxy-video?url=${encodeURIComponent(currentVideoUrl)}`;
-    }
-    return currentVideoUrl;
-  };
-  const videoSrc = getVideoSrc();
+  // Get the actual video URL to use
+  const videoSrc = currentVideoUrl;
 
   // Update refs when state changes
   useEffect(() => {
@@ -1540,7 +1520,7 @@ function App() {
                     {/* Video.js Player */}
                     <VideoJsPlayer
                       src={videoSrc}
-                      isHLS={isHLS && !isDebridLink}
+                      isHLS={isHLS}
                       playerRef={videojsPlayerRef}
                       isSyncing={isSyncingRef.current}
                       subtitleUrl={subtitleUrl}
@@ -2162,7 +2142,7 @@ function App() {
             </div>
 
             <div style={{ fontSize: '10px', color: '#aaa' }}>
-              State: {isPlaying ? 'PLAYING' : 'PAUSED'} | Index: {currentIndex} | Type: {isYouTube ? 'YouTube' : isDebridLink ? 'Debrid (Proxied)' : 'MP4'}
+              State: {isPlaying ? 'PLAYING' : 'PAUSED'} | Index: {currentIndex} | Type: {isYouTube ? 'YouTube' : 'MP4'}
             </div>
             {isPlaying && (
               <button
