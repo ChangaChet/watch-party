@@ -74,7 +74,7 @@ app.get('/api/proxy-video', async (req, res) => {
 
   try {
     // Optimization: Check if Real-Debrid has a streamable MP4 version
-    if (videoUrl.includes('real-debrid.com') || videoUrl.includes('/d/')) {
+    if (videoUrl.includes('real-debrid.com') || videoUrl.includes('/d/') || videoUrl.includes('torrentio.strem.fun')) {
       try {
         console.log('Checking RD streamability...');
         const fetch = (await import('node-fetch')).default;
