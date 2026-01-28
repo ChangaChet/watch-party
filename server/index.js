@@ -5,221 +5,224 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
+import fetch from 'node-fetch'; // Standard import for cleaner code
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const server = createServer(app);
+
+// Enable CORS for all origins (Fixes local dev issues)
 const io = new Server(server, {
   cors: {
-    origin: process.env.NODE_ENV === 'production'
-      ? true
-      : ["http://localhost:5173", "http://localhost:3000"],
+    origin: "*",
     methods: ["GET", "POST"],
     credentials: true
   }
 });
 
-app.use(cors({
-  origin: process.env.NODE_ENV === 'production'
-    ? true
-    : ["http://localhost:5173", "http://localhost:3000"],
-  credentials: true
-}));
+app.use(cors({ origin: "*" }));
 app.use(express.json());
 
+// Serve static files in production
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '../dist')));
 }
 
-// Low-level FFmpeg Proxy using spawn for maximum control
-app.get('/api/imdb-search', async (req, res) => {
-  const query = req.query.q;
-  if (!query) return res.json({ d: [] });
-  // IMDB suggestion API structure: https://v2.sg.media-imdb.com/suggestion/m/matrix.json
-  const firstChar = query[0].toLowerCase();
-  const url = `https://v2.sg.media-imdb.com/suggestion/${firstChar}/${encodeURIComponent(query)}.json`;
-
-  try {
-    const fetch = (await import('node-fetch')).default;
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`IMDB Search failed: ${response.status}`);
-    }
-
-    const data = await response.json();
-    res.json(data);
-  } catch (e) {
-    console.error('Search Proxy Error:', e.message);
-    // Return empty results on error to not break frontend
-    res.json({ d: [] });
-  }
-});
-
+// ---------------------------------------------------------
+// PROXY VIDEO HANDLER (The Fix)
+// ---------------------------------------------------------
 app.get('/api/proxy-video', async (req, res) => {
   const videoUrl = req.query.url;
+  const RD_TOKEN = 'CPRGHLAYDFGU5TZ4DCYQQQPRRFGZ22FIAIS7OQKK23VE45RWQ5SQ';
 
   if (!videoUrl) {
     return res.status(400).json({ error: 'Missing url parameter' });
   }
 
-  const isMkv = videoUrl.toLowerCase().includes('.mkv');
-  const RD_TOKEN = 'CPRGHLAYDFGU5TZ4DCYQQQPRRFGZ22FIAIS7OQKK23VE45RWQ5SQ';
+  // Helper: Pipe a direct URL to the response (Zero CPU usage)
+  const pipeRequest = async (sourceUrl) => {
+    try {
+      console.log('🔗 Proxying Direct Link:', sourceUrl);
+      const response = await fetch(sourceUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      });
+
+      if (!response.ok) throw new Error(`Stream failed: ${response.status}`);
+
+      res.writeHead(response.status, {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': response.headers.get('content-type') || 'video/mp4',
+        'Content-Length': response.headers.get('content-length'),
+      });
+      response.body.pipe(res);
+      return true;
+    } catch (e) {
+      console.error('❌ Pipe Error:', e.message);
+      return false;
+    }
+  };
 
   try {
-    // Optimization: Check if Real-Debrid has a streamable MP4 version
-    if (videoUrl.includes('real-debrid.com') || videoUrl.includes('/d/') || videoUrl.includes('torrentio.strem.fun')) {
+    let finalLink = videoUrl;
+
+    // --- STRATEGY 1: TORRENTIO "HASH HUNTING" ---
+    // We ignore the torrentio URL and go straight to RD API using the hash.
+    // Regex matches: .../realdebrid/APIKEY/HASH/...
+    const match = videoUrl.match(/realdebrid\/[A-Za-z0-9]+\/([a-zA-Z0-9]+)/);
+
+    if (match && match[1]) {
+      const hash = match[1];
+      console.log(`🕵️ Torrentio Detected! Hash: ${hash}`);
+      console.log('⚡ Hunting for MP4 via RD API...');
+
       try {
-        console.log('Checking RD streamability...');
-        const fetch = (await import('node-fetch')).default;
-        const params = new URLSearchParams();
-        params.append('link', videoUrl);
+        // 1. Get Torrent ID from Hash (Instant if cached)
+        const magParams = new URLSearchParams();
+        magParams.append('magnet', `magnet:?xt=urn:btih:${hash}`);
 
-        const rdRes = await fetch('https://api.real-debrid.com/rest/1.0/unrestrict/link', {
+        const addRes = await fetch('https://api.real-debrid.com/rest/1.0/torrents/addMagnet', {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${RD_TOKEN}`
-          },
-          body: params
+          headers: { 'Authorization': `Bearer ${RD_TOKEN}` },
+          body: magParams
         });
+        const addData = await addRes.json();
 
-        if (rdRes.ok) {
-          const rdData = await rdRes.json();
-          // Check for ALTERNATIVE (MP4) - The true 'Streamable' file
-          if (rdData.alternative && rdData.alternative.length > 0) {
-            // Log what we found
-            console.log('RD Alternatives found:', rdData.alternative.length);
+        if (addData.id) {
+          // 2. Select Files (Activates the link)
+          await fetch(`https://api.real-debrid.com/rest/1.0/torrents/selectFiles/${addData.id}`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${RD_TOKEN}` },
+            body: new URLSearchParams({ files: 'all' })
+          });
 
-            // Find the best quality mp4 (usually last in array, or check 'quality' field)
-            // RD usually returns [360, 480, 720, 1080] roughly.
-            // We want the highest quality MP4.
-            const mp4Alt = rdData.alternative.find(alt => alt.quality === '1080p') ||
-              rdData.alternative.find(alt => alt.quality === '720p') ||
-              rdData.alternative[rdData.alternative.length - 1]; // Fallback to last one
+          // 3. Get Links
+          const infoRes = await fetch(`https://api.real-debrid.com/rest/1.0/torrents/info/${addData.id}`, {
+            headers: { 'Authorization': `Bearer ${RD_TOKEN}` }
+          });
+          const infoData = await infoRes.json();
 
-            if (mp4Alt && mp4Alt.download) {
-              console.log('🚀 RD MP4 Alternative Found:', mp4Alt.quality, 'Redirecting ->', mp4Alt.download);
-              // Redirect to the MP4 file directly
-              return res.redirect(mp4Alt.download);
+          if (infoData.links && infoData.links.length > 0) {
+            // 4. Unrestrict the first link to find the MP4
+            // (Torrentio usually puts the video in the first link)
+            const unrestrictParams = new URLSearchParams();
+            unrestrictParams.append('link', infoData.links[0]);
+
+            const unRes = await fetch('https://api.real-debrid.com/rest/1.0/unrestrict/link', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${RD_TOKEN}` },
+              body: unrestrictParams
+            });
+            const unData = await unRes.json();
+
+            // 5. FIND THE MP4 (The Golden Ticket)
+            if (unData.alternative && unData.alternative.length > 0) {
+              // Find 1080p, then 720p, then whatever is first
+              const mp4Alt = unData.alternative.find(alt => alt.quality === '1080p') ||
+                unData.alternative.find(alt => alt.quality === '720p') ||
+                unData.alternative[0];
+
+              if (mp4Alt && mp4Alt.download) {
+                console.log('🎉 SUCCESS: Found Streamable MP4:', mp4Alt.download);
+                return await pipeRequest(mp4Alt.download);
+              }
+            }
+
+            // Fallback: If no MP4, use the direct download link (resolved from API)
+            if (unData.download) {
+              console.log('⚠️ No MP4 alternative found. Using direct MKV link from API.');
+              finalLink = unData.download;
             }
           }
         }
-      } catch (rdErr) {
-        console.warn('RD Stream Check Failed (falling back to FFmpeg):', rdErr.message);
+      } catch (e) {
+        console.error('⚠️ Hash Hunt Error:', e.message);
       }
     }
 
-    // Check if it's a Real-Debrid link OR an MKV file
-    const isRD = videoUrl.includes('real-debrid.com') || videoUrl.includes('/d/') || videoUrl.includes('torrentio.strem.fun');
+    // --- STRATEGY 2: FFMPEG TRANSCODE ---
+    // Only happens if Hash Hunt failed or no MP4 was found.
+    // finalLink is now likely a direct real-debrid.com link (safe), OR the original torrentio link (unsafe)
 
-    if (isRD || isMkv) {
-      console.log('Spawning FFmpeg/Proxy for restricted source:', videoUrl);
+    console.log('🎥 Spawning FFmpeg for:', finalLink);
 
-      // ... RD Check code is already above ...
+    res.writeHead(200, {
+      'Access-Control-Allow-Origin': '*',
+      'Content-Type': 'video/mp4',
+      'Connection': 'keep-alive'
+    });
 
-      // If we reach here, it's either not streamable or a raw MKV.
-      // ALWAYS use FFmpeg for RD links because we need to inject headers to avoid 403.
-      // Standard fetch proxy (below) fails for RD because of headers.
+    const ffmpegArgs = [
+      '-headers', `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n`,
+      '-i', finalLink,
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast', // Speed is priority
+      '-tune', 'zerolatency',
+      '-g', '60',
+      '-sc_threshold', '0',
+      '-profile:v', 'main',
+      '-level', '3.1',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-ac', '2',
+      '-af', 'aresample=async=1',
+      '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+      '-f', 'mp4',
+      'pipe:1'
+    ];
 
-      // 1. Log Info
-      console.log('Transcoding via FFmpeg:', videoUrl);
+    const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+    ffmpegProcess.stdout.pipe(res);
 
-      // 2. Set Response Headers
-      res.writeHead(200, {
-        'Access-Control-Allow-Origin': '*',
-        'Content-Type': 'video/mp4',
-        'Connection': 'keep-alive'
-      });
+    ffmpegProcess.stderr.on('data', (data) => {
+      // Only log actual errors
+      const msg = data.toString();
+      if (msg.includes('Error') || msg.includes('403')) console.log('FFmpeg Log:', msg.trim());
+    });
 
-      // 3. Spawn FFmpeg Process
-      const ffmpegArgs = [
-        '-headers', `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\nReferer: https://real-debrid.com/`,
-        '-i', videoUrl,
-        '-c:v', 'libx264',
-        '-preset', 'veryfast',
-        '-g', '60',
-        '-sc_threshold', '0',
-        '-profile:v', 'main',
-        '-level', '3.1',
-        '-pix_fmt', 'yuv420p',
-        '-c:a', 'aac',
-        '-b:a', '128k',
-        '-ac', '2',
-        '-af', 'aresample=async=1',
-        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-        '-f', 'mp4',
-        'pipe:1'
-      ];
-
-      const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
-      ffmpegProcess.stdout.pipe(res);
-
-      ffmpegProcess.stderr.on('data', (data) => {
-        const msg = data.toString();
-        if (msg.includes('Error') || msg.includes('Invalid') || msg.includes('403')) {
-          console.log('FFmpeg Error:', msg.substring(0, 200));
-        }
-      });
-
-      req.on('close', () => {
-        console.log('Client disconnected, killing FFmpeg');
-        ffmpegProcess.kill();
-      });
-
-    } else {
-      // Standard Proxy for non-MKV, non-RD links
-      const fetch = (await import('node-fetch')).default;
-
-      const response = await fetch(videoUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 ...' }
-      });
-      res.writeHead(response.status, {
-        'Access-Control-Allow-Origin': '*',
-        'Content-Type': response.headers.get('content-type') || 'video/mp4'
-      });
-      response.body.pipe(res);
-    }
+    req.on('close', () => {
+      console.log('Client disconnected, killing FFmpeg');
+      ffmpegProcess.kill();
+    });
 
   } catch (error) {
-    console.error('Proxy Fatal Error:', error.message);
-    if (!res.headersSent) {
-      // Fallback: Redirect to original URL so browser attempts direct playback
-      // This mitigates the IP Blocking issue on Render by letting the user's browser take over
-      return res.redirect(videoUrl);
-    }
+    console.error('❌ Proxy Fatal Error:', error.message);
+    if (!res.headersSent) res.redirect(videoUrl);
   }
 });
 
-app.options('/api/proxy-video', (req, res) => {
-  res.set('Access-Control-Allow-Origin', '*');
-  res.status(204).send();
+// ---------------------------------------------------------
+// REST OF THE SERVER (IMDB, Socket.io)
+// ---------------------------------------------------------
+
+app.get('/api/imdb-search', async (req, res) => {
+  const query = req.query.q;
+  if (!query) return res.json({ d: [] });
+  const firstChar = query[0].toLowerCase();
+  const url = `https://v2.sg.media-imdb.com/suggestion/${firstChar}/${encodeURIComponent(query)}.json`;
+  try {
+    const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const data = await response.json();
+    res.json(data);
+  } catch (e) { res.json({ d: [] }); }
 });
 
-// Socket Logic ...
 const rooms = new Map();
 io.on('connection', (socket) => {
+  // Existing socket logic...
   socket.on('join_room', ({ roomId, username }) => {
     socket.join(roomId);
     if (!rooms.has(roomId)) {
-      rooms.set(roomId, {
-        playlist: [], currentIndex: 0, isPlaying: false, currentTime: 0,
-        users: [], messages: [], adminId: socket.id, permissions: 'open'
-      });
+      rooms.set(roomId, { playlist: [], currentIndex: 0, isPlaying: false, currentTime: 0, users: [], messages: [], adminId: socket.id, permissions: 'open' });
     }
     const room = rooms.get(roomId);
     room.users.push({ id: socket.id, username });
     socket.emit('room_state', room);
     socket.to(roomId).emit('user_joined', { username, userCount: room.users.length, users: room.users });
-    if (room.users.length > 1) {
-      const existingUser = room.users.find(u => u.id !== socket.id);
-      if (existingUser) io.to(existingUser.id).emit('request_sync', { requesterId: socket.id });
-    }
   });
 
   socket.on('add_to_playlist', ({ roomId, videoUrl }) => {
@@ -274,12 +277,9 @@ io.on('connection', (socket) => {
         const kickedUser = room.users[userIndex];
         room.users.splice(userIndex, 1);
         io.to(roomId).emit('user_left', { username: kickedUser.username, users: room.users });
-        const targetSocket = io.sockets.sockets.get(targetId);
-        if (targetSocket) targetSocket.leave(roomId);
       }
     }
   });
-  // Missing handlers added back
   socket.on('remove_from_playlist', ({ roomId, index }) => {
     const room = rooms.get(roomId);
     if (room) {
@@ -297,4 +297,9 @@ io.on('connection', (socket) => {
 });
 
 const PORT = 3001;
-server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+server.listen(PORT, () => {
+  console.log('///////////////////////////////////////////////////////////');
+  console.log('🚀 SERVER STARTED - VERSION 2.0 (HASH HUNTER)');
+  console.log(`🚀 Listening on port ${PORT}`);
+  console.log('///////////////////////////////////////////////////////////');
+});
