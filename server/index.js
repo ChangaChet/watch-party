@@ -4,9 +4,7 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { spawn } from 'child_process';
 import fetch from 'node-fetch';
-import ffmpegPath from 'ffmpeg-static';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,188 +29,14 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // ---------------------------------------------------------
-// PROXY VIDEO HANDLER (VERSION 9.0 - PIPE CHAIN METHOD)
+// SERVER V10 - LIGHTWEIGHT (NO FFMPEG)
 // ---------------------------------------------------------
-app.get('/api/proxy-video', async (req, res) => {
-  const videoUrl = req.query.url;
-  const RD_TOKEN = 'CPRGHLAYDFGU5TZ4DCYQQQPRRFGZ22FIAIS7OQKK23VE45RWQ5SQ';
 
-  if (!videoUrl) {
-    return res.status(400).json({ error: 'Missing url parameter' });
-  }
-
-  // Helper: Pipe a direct URL (Zero CPU usage)
-  const pipeRequest = async (sourceUrl) => {
-    try {
-      console.log('🔗 Proxying Direct Link:', sourceUrl);
-      const response = await fetch(sourceUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-      });
-      if (!response.ok) throw new Error(`Stream failed: ${response.status}`);
-
-      res.writeHead(response.status, {
-        'Access-Control-Allow-Origin': '*',
-        'Content-Type': response.headers.get('content-type') || 'video/mp4',
-        'Content-Length': response.headers.get('content-length'),
-      });
-      response.body.pipe(res);
-      return true;
-    } catch (e) {
-      console.error('❌ Pipe Error:', e.message);
-      return false;
-    }
-  };
-
-  try {
-    let finalLink = videoUrl;
-
-    // --- STRATEGY 1: TORRENTIO "HASH HUNTING" ---
-    const match = videoUrl.match(/realdebrid\/[A-Za-z0-9]+\/([a-zA-Z0-9]+)/);
-
-    if (match && match[1]) {
-      const hash = match[1];
-      console.log(`🕵️ Torrentio Detected! Hash: ${hash}`);
-      console.log('⚡ Hunting for MP4 via RD API...');
-
-      try {
-        // 1. Get Torrent ID
-        const magParams = new URLSearchParams();
-        magParams.append('magnet', `magnet:?xt=urn:btih:${hash}`);
-
-        const addRes = await fetch('https://api.real-debrid.com/rest/1.0/torrents/addMagnet', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${RD_TOKEN}` },
-          body: magParams
-        });
-        const addData = await addRes.json();
-
-        if (addData.id) {
-          // 2. Activate Files
-          await fetch(`https://api.real-debrid.com/rest/1.0/torrents/selectFiles/${addData.id}`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${RD_TOKEN}` },
-            body: new URLSearchParams({ files: 'all' })
-          });
-
-          // 3. Get Link Info
-          const infoRes = await fetch(`https://api.real-debrid.com/rest/1.0/torrents/info/${addData.id}`, {
-            headers: { 'Authorization': `Bearer ${RD_TOKEN}` }
-          });
-          const infoData = await infoRes.json();
-
-          if (infoData.links && infoData.links.length > 0) {
-            // 4. Unrestrict the first link
-            const unrestrictParams = new URLSearchParams();
-            unrestrictParams.append('link', infoData.links[0]);
-
-            const unRes = await fetch('https://api.real-debrid.com/rest/1.0/unrestrict/link', {
-              method: 'POST',
-              headers: { 'Authorization': `Bearer ${RD_TOKEN}` },
-              body: unrestrictParams
-            });
-            const unData = await unRes.json();
-
-            // 5. Look for Pre-Made MP4
-            if (unData.alternative && unData.alternative.length > 0) {
-              const mp4Alt = unData.alternative.find(alt => alt.quality === '1080p') ||
-                unData.alternative.find(alt => alt.quality === '720p') ||
-                unData.alternative[0];
-
-              if (mp4Alt && mp4Alt.download) {
-                console.log('🎉 SUCCESS: Found Streamable MP4:', mp4Alt.download);
-                return await pipeRequest(mp4Alt.download);
-              }
-            }
-
-            if (unData.download) {
-              console.log('⚠️ No MP4 alternative found. Using direct MKV link from API.');
-              finalLink = unData.download;
-            }
-          }
-        }
-      } catch (e) {
-        console.error('⚠️ Hash Hunt Error:', e.message);
-      }
-    }
-
-    // --- STRATEGY 2: PIPE-CHAIN TRANSCODING (VERSION 9.0) ---
-    console.log('📥 Establishing Source Connection...');
-
-    // Step A: Fetch the file stream using Node.js (Reliable)
-    const upstreamRes = await fetch(finalLink, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      }
-    });
-
-    if (!upstreamRes.ok) {
-      console.error(`❌ Upstream Error: ${upstreamRes.status} ${upstreamRes.statusText}`);
-      return res.status(upstreamRes.status).send('Upstream Error');
-    }
-
-    console.log('✅ Connection Established. Spawning FFmpeg...');
-
-    res.writeHead(200, {
-      'Access-Control-Allow-Origin': '*',
-      'Content-Type': 'video/mp4',
-      'Connection': 'keep-alive'
-    });
-
-    const ffmpegArgs = [
-      // INPUT: Read from Standard Input (pipe:0) instead of URL
-      '-i', 'pipe:0',
-
-      // VIDEO: H.264
-      '-c:v', 'libx264',
-      '-preset', 'ultrafast',
-      '-tune', 'zerolatency',
-
-      // SCALING: Safe 720p
-      '-vf', 'scale=-2:720',
-      '-pix_fmt', 'yuv420p',
-
-      // AUDIO: AAC
-      '-c:a', 'aac',
-      '-b:a', '128k',
-      '-ac', '2',
-
-      // FLAGS
-      '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-      '-f', 'mp4',
-      'pipe:1'
-    ];
-
-    const ffmpegProcess = spawn(ffmpegPath, ffmpegArgs);
-
-    // 1. Pipe Download -> FFmpeg Input
-    upstreamRes.body.pipe(ffmpegProcess.stdin);
-
-    // 2. Pipe FFmpeg Output -> Browser Response
-    ffmpegProcess.stdout.pipe(res);
-
-    // Logging
-    ffmpegProcess.stderr.on('data', (data) => {
-      const msg = data.toString();
-      if (msg.includes('Error') || msg.includes('403')) console.log('FFmpeg:', msg.trim());
-    });
-
-    req.on('close', () => {
-      console.log('Client disconnected, killing FFmpeg');
-      ffmpegProcess.kill();
-      // Ensure we stop downloading from RD
-      if (upstreamRes.body && upstreamRes.body.destroy) upstreamRes.body.destroy();
-    });
-
-  } catch (error) {
-    console.error('❌ Proxy Fatal Error:', error.message);
-    if (!res.headersSent) res.redirect(videoUrl);
-  }
-});
+// NOTE: All video playback is now handled on the client-side via EmbedPlayer (MappleTV).
+// The server only handles WebSocket syncing and simple IMDB lookups.
 
 // ---------------------------------------------------------
-// REST OF APP
+// REST OF APP (IMDB, Sockets)
 // ---------------------------------------------------------
 
 app.get('/api/imdb-search', async (req, res) => {

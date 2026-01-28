@@ -6,9 +6,12 @@ import './VideoJsTheme.css';
 import JSZip from 'jszip';
 import SrtToVttConverter, { convertSrtToVtt } from './SrtToVttConverter';
 import SubtitleOverlay from './SubtitleOverlay';
-import VideoJsPlayer from './VideoJsPlayer';
+import SubtitleOverlay from './SubtitleOverlay';
 
 import MovieSearchModal from './MovieSearchModal';
+
+import MovieSearchModal from './MovieSearchModal';
+import EmbedPlayer from './EmbedPlayer';
 
 const SOCKET_URL = import.meta.env.PROD
   ? window.location.origin
@@ -1542,162 +1545,8 @@ function App() {
           <div className="player-wrapper">
             {currentVideoUrl ? (
               <div className="player-container">
-                {isEmbed ? (
-                  <div style={{ width: '100%', height: '100%', position: 'relative' }}>
-                    <iframe
-                      src={videoSrc}
-                      style={{
-                        width: '100%',
-                        height: '100%',
-                        border: 'none',
-                        backgroundColor: '#000'
-                      }}
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                      allowFullScreen
-                    />
-                    <div style={{
-                      position: 'absolute',
-                      bottom: '10px',
-                      left: '10px',
-                      background: 'rgba(0,0,0,0.7)',
-                      color: 'white',
-                      padding: '5px 10px',
-                      borderRadius: '4px',
-                      fontSize: '12px',
-                      pointerEvents: 'none'
-                    }}>
-                      ⚠️ Syncing limited for external embeds
-                    </div>
-                  </div>
-                ) : isYouTube ? (
-                  <div id="youtube-player" style={{ width: '100%', height: '100%' }}></div>
-                ) : useVideoJs ? (
-                  <>
-                    {/* Video.js Player */}
-                    <VideoJsPlayer
-                      src={videoSrc}
-                      isHLS={isHLS}
-                      playerRef={videojsPlayerRef}
-                      isSyncing={isSyncingRef.current}
-                      subtitleUrl={subtitleUrl}
-                      onPlay={(currentTime) => {
-                        if (!isSyncingRef.current) {
-                          setIsPlaying(true);
-                          socket.emit('sync_action', { roomId: roomIdRef.current, action: 'play', data: { currentTime } });
-                        }
-                      }}
-                      onPause={(currentTime) => {
-                        if (!isSyncingRef.current) {
-                          setIsPlaying(false);
-                          socket.emit('sync_action', { roomId: roomIdRef.current, action: 'pause', data: { currentTime } });
-                        }
-                      }}
-                      onSeeked={(currentTime) => {
-                        if (!isSyncingRef.current) {
-                          socket.emit('sync_action', { roomId: roomIdRef.current, action: 'seek', data: { currentTime, isPlaying: isPlayingRef.current } });
-                        }
-                      }}
-                      onReady={(player) => {
-                        console.log('Video.js player ready');
-                        setVideoError(null);
-                        // Ask for sync time
-                        socket.emit('ask_for_time', { roomId: roomIdRef.current });
-                      }}
-                      onError={(error) => {
-                        console.error('Video.js error:', error);
-                        let errorMsg = 'Failed to load video';
-                        if (error?.code === 4) {
-                          errorMsg = 'Video format not supported. Try a different source.';
-                        }
-                        setVideoError(errorMsg);
-                      }}
-                    />
-
-                    {/* Subtitle Overlay - Renders SRT/VTT subtitles with delay adjustment */}
-                    <SubtitleOverlay
-                      videoRef={videojsPlayerRef}
-                      subtitleContent={subtitleContent}
-                      delay={subtitleDelay}
-                      fontSize={subtitleFontSize}
-                      enabled={subtitleEnabled}
-                    />
-                  </>
-                ) : (
-                  <>
-                    {/* Native Video Player (Fallback) */}
-                    <video
-                      ref={videoRef}
-                      src={isHLS ? undefined : videoSrc}
-                      controls
-                      style={{ width: '100%', height: '100%', backgroundColor: '#000' }}
-                      onPlay={handleVideoPlay}
-                      onPause={handleVideoPause}
-                      onLoadedMetadata={handleVideoLoaded}
-                      onError={(e) => {
-                        console.error('Video load error:', e);
-                        const video = e.target;
-                        let errorMsg = 'Failed to load video';
-                        if (video.error) {
-                          switch (video.error.code) {
-                            case 1: errorMsg = 'Video loading aborted'; break;
-                            case 2: errorMsg = 'Network error - check your connection'; break;
-                            case 3: errorMsg = 'Video format not supported (try MP4 instead of MKV)'; break;
-                            case 4: errorMsg = 'Video not found or access denied'; break;
-                            default: errorMsg = 'Unknown video error';
-                          }
-                        }
-                        setVideoError(errorMsg);
-                      }}
-                      onCanPlay={() => setVideoError(null)}
-                      playsInline
-                      webkit-playsinline="true"
-                    >
-                      {subtitleUrl && (
-                        <track
-                          kind="subtitles"
-                          src={subtitleUrl}
-                          srcLang="en"
-                          label="Subtitles"
-                          default
-                        />
-                      )}
-                    </video>
-
-                    {/* Subtitle Overlay - Renders SRT/VTT subtitles with delay adjustment */}
-                    <SubtitleOverlay
-                      videoRef={videoRef}
-                      subtitleContent={subtitleContent}
-                      delay={subtitleDelay}
-                      fontSize={subtitleFontSize}
-                      enabled={subtitleEnabled}
-                    />
-                  </>
-                )}
-
-                {/* Subtitle Delay Notification - Shared across all players */}
-                {showDelayNotification && subtitleContent && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      top: '10px',
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      background: 'rgba(0, 0, 0, 0.85)',
-                      color: subtitleDelay === 0 ? '#fff' : subtitleDelay > 0 ? '#22c55e' : '#f59e0b',
-                      padding: '8px 16px',
-                      borderRadius: '6px',
-                      fontSize: '0.9rem',
-                      fontWeight: 'bold',
-                      zIndex: 30,
-                      animation: 'fadeInOut 1.5s ease-out',
-                      boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
-                    }}
-                  >
-                    ⏱️ Subtitle Delay: {subtitleDelay > 0 ? '+' : ''}{subtitleDelay}ms
-                  </div>
-                )}
-
-                {/* Track Selection Button - Always visible for external subtitles */}
+                <EmbedPlayer videoId={currentVideoUrl} socket={socket} roomId={roomId} />
+              </div>
                 {!isYouTube && (
                   <button
                     onClick={() => setShowTrackMenu(!showTrackMenu)}
@@ -2484,78 +2333,78 @@ function App() {
           )}
         </aside>
       </main >
-      {maximizedVideo && (
-        <div className="maximized-overlay" style={{
-          position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.9)',
+    { maximizedVideo && (
+      <div className="maximized-overlay" style={{
+        position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.9)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center'
+      }}>
+        <button onClick={() => setMaximizedVideo(null)} style={{
+          position: 'absolute', top: '1rem', right: '1rem',
+          background: 'rgba(255,255,255,0.2)', color: 'white', border: 'none',
+          fontSize: '2rem', cursor: 'pointer', borderRadius: '50%', width: '50px', height: '50px',
           display: 'flex', alignItems: 'center', justifyContent: 'center'
-        }}>
-          <button onClick={() => setMaximizedVideo(null)} style={{
-            position: 'absolute', top: '1rem', right: '1rem',
-            background: 'rgba(255,255,255,0.2)', color: 'white', border: 'none',
-            fontSize: '2rem', cursor: 'pointer', borderRadius: '50%', width: '50px', height: '50px',
-            display: 'flex', alignItems: 'center', justifyContent: 'center'
-          }}>✕</button>
+        }}>✕</button>
 
-          <div style={{ width: '90%', height: '90%', position: 'relative' }}>
-            {maximizedVideo.isLocal ? (
-              <video
-                ref={(el) => {
-                  if (el) el.srcObject = maximizedVideo.stream;
-                }}
-                autoPlay playsInline muted
-                style={{ width: '100%', height: '100%', objectFit: 'contain', transform: isScreenSharing ? 'none' : 'scaleX(-1)' }}
-              />
-            ) : (
-              <VideoPlayer stream={maximizedVideo.stream} />
-            )}
-            <div style={{ position: 'absolute', bottom: '1rem', left: '1rem', background: 'rgba(0,0,0,0.6)', padding: '0.5rem 1rem', borderRadius: '0.5rem', color: 'white', fontSize: '1.5rem' }}>
-              {maximizedVideo.username}
-            </div>
+        <div style={{ width: '90%', height: '90%', position: 'relative' }}>
+          {maximizedVideo.isLocal ? (
+            <video
+              ref={(el) => {
+                if (el) el.srcObject = maximizedVideo.stream;
+              }}
+              autoPlay playsInline muted
+              style={{ width: '100%', height: '100%', objectFit: 'contain', transform: isScreenSharing ? 'none' : 'scaleX(-1)' }}
+            />
+          ) : (
+            <VideoPlayer stream={maximizedVideo.stream} />
+          )}
+          <div style={{ position: 'absolute', bottom: '1rem', left: '1rem', background: 'rgba(0,0,0,0.6)', padding: '0.5rem 1rem', borderRadius: '0.5rem', color: 'white', fontSize: '1.5rem' }}>
+            {maximizedVideo.username}
           </div>
         </div>
-      )
-      }
+      </div>
+    )
+}
 
-      {/* Debug Log Overlay */}
-      {
-        showDebug && (
-          <div style={{
-            position: 'fixed',
-            bottom: '20px',
-            right: '340px', // Left of sidebar
-            width: '400px',
-            height: '300px',
-            background: 'rgba(0,0,0,0.85)',
-            border: '1px solid rgba(255,255,255,0.2)',
-            borderRadius: '8px',
-            padding: '10px',
-            zIndex: 9999,
-            display: 'flex',
-            flexDirection: 'column',
-            fontSize: '0.75rem',
-            color: '#0f0',
-            fontFamily: 'monospace'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px', borderBottom: '1px solid #333' }}>
-              <span>Debug Log ({debugLogs.length})</span>
-              <button onClick={() => setDebugLogs([])} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer' }}>Clear</button>
-            </div>
-            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column-reverse' }}>
-              {debugLogs.map((log, i) => (
-                <div key={i} style={{ padding: '2px 0', borderBottom: '1px solid #222' }}>{log}</div>
-              ))}
-            </div>
-          </div>
-        )
-      }
+{/* Debug Log Overlay */ }
+{
+  showDebug && (
+    <div style={{
+      position: 'fixed',
+      bottom: '20px',
+      right: '340px', // Left of sidebar
+      width: '400px',
+      height: '300px',
+      background: 'rgba(0,0,0,0.85)',
+      border: '1px solid rgba(255,255,255,0.2)',
+      borderRadius: '8px',
+      padding: '10px',
+      zIndex: 9999,
+      display: 'flex',
+      flexDirection: 'column',
+      fontSize: '0.75rem',
+      color: '#0f0',
+      fontFamily: 'monospace'
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px', borderBottom: '1px solid #333' }}>
+        <span>Debug Log ({debugLogs.length})</span>
+        <button onClick={() => setDebugLogs([])} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer' }}>Clear</button>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column-reverse' }}>
+        {debugLogs.map((log, i) => (
+          <div key={i} style={{ padding: '2px 0', borderBottom: '1px solid #222' }}>{log}</div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
-      {/* Debug Toggle Button (Hidden in plain sight, e.g., double click logo or specific key) */}
-      <button
-        style={{ position: 'fixed', bottom: '10px', left: '10px', opacity: 0.3, zIndex: 10000, fontSize: '0.7rem' }}
-        onClick={() => setShowDebug(!showDebug)}
-      >
-        {showDebug ? 'Hide Debug' : 'Show Debug'}
-      </button>
+{/* Debug Toggle Button (Hidden in plain sight, e.g., double click logo or specific key) */ }
+<button
+  style={{ position: 'fixed', bottom: '10px', left: '10px', opacity: 0.3, zIndex: 10000, fontSize: '0.7rem' }}
+  onClick={() => setShowDebug(!showDebug)}
+>
+  {showDebug ? 'Hide Debug' : 'Show Debug'}
+</button>
     </div >
   );
 }
