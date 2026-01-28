@@ -258,9 +258,20 @@ function App() {
 
   // Get the actual video URL to use
   let videoSrc = currentVideoUrl;
+
+  const isRD = currentVideoUrl && (
+    currentVideoUrl.includes('real-debrid.com') ||
+    currentVideoUrl.includes('alldebrid') ||
+    currentVideoUrl.includes('torrentio.strem.fun')
+  );
+
   if (is111Movies && currentVideoUrl.match(/^tt\d+/)) {
     // If just an IMDB ID, default to movie embed
     videoSrc = `https://111movies.com/movie/${currentVideoUrl}`;
+  } else if (isRD) {
+    // ROUTE THROUGH PROXY (MP4 Hunter)
+    const baseUrl = import.meta.env.PROD ? '' : 'http://localhost:3001';
+    videoSrc = `${baseUrl}/api/proxy-video?url=${encodeURIComponent(currentVideoUrl)}`;
   }
 
   // Update refs when state changes
