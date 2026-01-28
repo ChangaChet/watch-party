@@ -126,7 +126,7 @@ app.get('/api/proxy-video', async (req, res) => {
 
       // 3. Spawn FFmpeg Process
       const ffmpegArgs = [
-        '-headers', `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\nReferer: https://real-debrid.com/\r\n`,
+        '-headers', `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\nReferer: https://real-debrid.com/`,
         '-i', videoUrl,
         '-c:v', 'libx264',
         '-preset', 'veryfast',
