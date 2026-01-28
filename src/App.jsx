@@ -340,7 +340,11 @@ function App() {
               </div>
             ) : (
               <div className="empty-player">
-                <p>Add an IMDB ID (e.g. tt1234567) to start watching</p>
+                <p>Enter an IMDB ID to start watching.</p>
+                <div style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.5rem' }}>
+                  Movies: <code>tt1234567</code><br />
+                  TV Shows: <code>tt1234567 s1 e1</code>
+                </div>
               </div>
             )}
 

@@ -3,15 +3,26 @@ import React, { useEffect, useRef } from 'react';
 const EmbedPlayer = ({ videoId, socket, roomId }) => {
     const iframeRef = useRef(null);
 
-    // Clean the ID (ensure no URL parts, just the ID)
-    // If full URL was passed, try to extract tt ID
-    const cleanId = videoId.includes('imdb.com') || videoId.includes('tt')
-        ? (videoId.match(/tt\d+/) || [videoId])[0]
-        : videoId;
+    // Parse input for TV Show format (e.g., "tt12345 s1 e1") or default to Movie
+    const parseVideoInput = (input) => {
+        // Try to match "tt..." then "s..." then "e..."
+        // Regex allows spaces, case insensitive
+        const tvMatch = input.match(/(tt\d+).*?s(\d+).*?e(\d+)/i);
 
-    // Use MappleTV embed API
-    const EMBED_BASE = "https://mappletv.uk/embed/movie";
-    const embedUrl = `${EMBED_BASE}/${cleanId}`;
+        if (tvMatch) {
+            const [, id, season, episode] = tvMatch;
+            return `https://mappletv.uk/embed/tv/${id}/${season}/${episode}`;
+        }
+
+        // Default to Movie
+        const cleanId = input.includes('imdb.com') || input.includes('tt')
+            ? (input.match(/tt\d+/) || [input])[0]
+            : input;
+
+        return `https://mappletv.uk/embed/movie/${cleanId}`;
+    };
+
+    const embedUrl = parseVideoInput(videoId);
 
     useEffect(() => {
         // 1. Listen for events FROM the iframe (User clicked play/pause)
