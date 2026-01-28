@@ -102,12 +102,20 @@ app.get('/api/proxy-video', async (req, res) => {
       }
     }
 
-    if (isMkv) {
-      console.log('Spawning FFmpeg (Direct Pipe) for:', videoUrl);
-      const fetch = (await import('node-fetch')).default;
+    // Check if it's a Real-Debrid link OR an MKV file
+    const isRD = videoUrl.includes('real-debrid.com') || videoUrl.includes('/d/');
+
+    if (isRD || isMkv) {
+      console.log('Spawning FFmpeg/Proxy for restricted source:', videoUrl);
+
+      // ... RD Check code is already above ...
+
+      // If we reach here, it's either not streamable or a raw MKV.
+      // ALWAYS use FFmpeg for RD links because we need to inject headers to avoid 403.
+      // Standard fetch proxy (below) fails for RD because of headers.
 
       // 1. Log Info
-      console.log('Proxying MKV via FFmpeg:', videoUrl);
+      console.log('Transcoding via FFmpeg:', videoUrl);
 
       // 2. Set Response Headers
       res.writeHead(200, {
@@ -116,18 +124,13 @@ app.get('/api/proxy-video', async (req, res) => {
         'Connection': 'keep-alive'
       });
 
-
-
       // 3. Spawn FFmpeg Process
-      // Pass the URL directly to FFmpeg instead of piping.
-      // This often handles seeking, headers, and protocol quirks better than node-fetch piping.
       const ffmpegArgs = [
         '-headers', `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\nReferer: https://real-debrid.com/\r\n`,
         '-i', videoUrl,
         '-c:v', 'libx264',
-
-        '-preset', 'veryfast', // Slightly better compression/stability than ultrafast
-        '-g', '60', // Keyframe interval (crucial for streaming)
+        '-preset', 'veryfast',
+        '-g', '60',
         '-sc_threshold', '0',
         '-profile:v', 'main',
         '-level', '3.1',
@@ -141,42 +144,25 @@ app.get('/api/proxy-video', async (req, res) => {
         'pipe:1'
       ];
 
-      console.log('Spawning FFmpeg (Direct URL) for:', videoUrl);
       const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
-
-      // 4. Pipe FFmpeg Stdout -> Response (No Input Pipe needed)
-      // sourceResponse.body.pipe(ffmpegProcess.stdin); // REMOVED
-
-      // 5. Pipe FFmpeg Stdout -> Response
       ffmpegProcess.stdout.pipe(res);
 
-      // 6. Error Handling & logging
       ffmpegProcess.stderr.on('data', (data) => {
         const msg = data.toString();
-        // Log stream info to see what FFmpeg detects
-        if (msg.includes('Stream #') || msg.includes('Audio')) {
-          console.log('FFmpeg Detect:', msg.substring(0, 300));
-        }
-        if (msg.includes('Error') || msg.includes('Invalid')) {
+        if (msg.includes('Error') || msg.includes('Invalid') || msg.includes('403')) {
           console.log('FFmpeg Error:', msg.substring(0, 200));
         }
       });
 
-      ffmpegProcess.on('close', (code) => {
-        console.log(`FFmpeg process exited with code ${code}`);
-        if (!res.writableEnded) res.end();
-      });
-
-      // Handle Client Disconnect
-      // Handle Client Disconnect
       req.on('close', () => {
         console.log('Client disconnected, killing FFmpeg');
         ffmpegProcess.kill();
       });
 
     } else {
-      // Standard Proxy for non-MKV
+      // Standard Proxy for non-MKV, non-RD links
       const fetch = (await import('node-fetch')).default;
+
       const response = await fetch(videoUrl, {
         headers: { 'User-Agent': 'Mozilla/5.0 ...' }
       });
