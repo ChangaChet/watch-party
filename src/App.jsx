@@ -1369,11 +1369,15 @@ function App() {
     e.preventDefault();
     if (!videoUrl) return;
 
-    try {
-      new URL(videoUrl);
-    } catch (_) {
-      alert("Please enter a valid URL (e.g., https://youtube.com/...)");
-      return;
+    // Check if it's a valid URL OR an IMDB ID (for 111movies)
+    const isImdbId = /^tt\d+/.test(videoUrl);
+    if (!isImdbId) {
+      try {
+        new URL(videoUrl);
+      } catch (_) {
+        alert("Please enter a valid URL (e.g., https://youtube.com/...) or an IMDB ID (e.g., tt12345)");
+        return;
+      }
     }
 
     socket.emit('add_to_playlist', { roomId, videoUrl });
