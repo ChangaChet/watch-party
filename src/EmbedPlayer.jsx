@@ -11,7 +11,7 @@ const EmbedPlayer = ({ videoId, socket, roomId }) => {
 
         if (tvMatch) {
             const [, id, season, episode] = tvMatch;
-            return `https://mappletv.uk/embed/tv/${id}/${season}/${episode}`;
+            return `https://vidsrc.xyz/embed/tv/${id}/${season}/${episode}`;
         }
 
         // Default to Movie
@@ -19,7 +19,7 @@ const EmbedPlayer = ({ videoId, socket, roomId }) => {
             ? (input.match(/tt\d+/) || [input])[0]
             : input;
 
-        return `https://mappletv.uk/embed/movie/${cleanId}`;
+        return `https://vidsrc.xyz/embed/movie/${cleanId}`;
     };
 
     const embedUrl = parseVideoInput(videoId);
@@ -27,8 +27,8 @@ const EmbedPlayer = ({ videoId, socket, roomId }) => {
     useEffect(() => {
         // 1. Listen for events FROM the iframe (User clicked play/pause)
         const handleIframeMessage = (event) => {
-            // Security check - allowing mappletv domains
-            if (!event.origin.includes('mappletv.uk')) return;
+            // Security check - allowing embed domains
+            if (!event.origin.includes('vidsrc')) return;
 
             const { type, data } = event.data;
             console.log('PostMessage Received:', type, data); // Debug
