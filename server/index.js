@@ -31,11 +31,10 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // ---------------------------------------------------------
-// PROXY VIDEO HANDLER (VERSION 5.0 - COMPATIBILITY MODE)
+// PROXY VIDEO HANDLER (VERSION 9.0 - PIPE CHAIN METHOD)
 // ---------------------------------------------------------
 app.get('/api/proxy-video', async (req, res) => {
   const videoUrl = req.query.url;
-  // RECOMMENDATION: Use process.env.RD_TOKEN in your Render Dashboard
   const RD_TOKEN = 'CPRGHLAYDFGU5TZ4DCYQQQPRRFGZ22FIAIS7OQKK23VE45RWQ5SQ';
 
   if (!videoUrl) {
@@ -51,7 +50,6 @@ app.get('/api/proxy-video', async (req, res) => {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
       });
-
       if (!response.ok) throw new Error(`Stream failed: ${response.status}`);
 
       res.writeHead(response.status, {
@@ -139,10 +137,22 @@ app.get('/api/proxy-video', async (req, res) => {
       }
     }
 
-    // --- STRATEGY 2: FFMPEG TRANSCODE (COMPATIBILITY MODE) ---
-    // If we are here, we MUST convert the video because it is likely an MKV/HEVC file
-    // that browsers cannot play directly.
-    console.log('🎥 Spawning FFmpeg (Transcoding Mode) for:', finalLink);
+    // --- STRATEGY 2: PIPE-CHAIN TRANSCODING (VERSION 9.0) ---
+    console.log('📥 Establishing Source Connection...');
+
+    // Step A: Fetch the file stream using Node.js (Reliable)
+    const upstreamRes = await fetch(finalLink, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    });
+
+    if (!upstreamRes.ok) {
+      console.error(`❌ Upstream Error: ${upstreamRes.status} ${upstreamRes.statusText}`);
+      return res.status(upstreamRes.status).send('Upstream Error');
+    }
+
+    console.log('✅ Connection Established. Spawning FFmpeg...');
 
     res.writeHead(200, {
       'Access-Control-Allow-Origin': '*',
@@ -151,40 +161,48 @@ app.get('/api/proxy-video', async (req, res) => {
     });
 
     const ffmpegArgs = [
-      '-headers', `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n`,
-      '-i', finalLink,
+      // INPUT: Read from Standard Input (pipe:0) instead of URL
+      '-i', 'pipe:0',
 
-      // VIDEO: Force H.264 encoding (The most compatible format)
+      // VIDEO: H.264
       '-c:v', 'libx264',
-      '-preset', 'ultrafast',  // Fastest encoding to prevent buffering
-      '-tune', 'zerolatency',  // Optimize for streaming
-      '-vf', 'scale=-2:720,format=yuv420p',   // Downscale to 720p & ensure 8-bit color (Critical for web)
-      '-g', '60',              // Keyframe every 2s for smooth seeking
-      '-profile:v', 'main',
+      '-preset', 'ultrafast',
+      '-tune', 'zerolatency',
 
-      // AUDIO: Force AAC encoding
+      // SCALING: Safe 720p
+      '-vf', 'scale=-2:720',
+      '-pix_fmt', 'yuv420p',
+
+      // AUDIO: AAC
       '-c:a', 'aac',
       '-b:a', '128k',
       '-ac', '2',
 
-      // FLAGS: Required for streaming MP4
+      // FLAGS
       '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
       '-f', 'mp4',
       'pipe:1'
     ];
 
     const ffmpegProcess = spawn(ffmpegPath, ffmpegArgs);
+
+    // 1. Pipe Download -> FFmpeg Input
+    upstreamRes.body.pipe(ffmpegProcess.stdin);
+
+    // 2. Pipe FFmpeg Output -> Browser Response
     ffmpegProcess.stdout.pipe(res);
 
+    // Logging
     ffmpegProcess.stderr.on('data', (data) => {
       const msg = data.toString();
-      // Log errors to help debug
-      if (msg.includes('Error') || msg.includes('403')) console.log('FFmpeg Log:', msg.trim());
+      if (msg.includes('Error') || msg.includes('403')) console.log('FFmpeg:', msg.trim());
     });
 
     req.on('close', () => {
       console.log('Client disconnected, killing FFmpeg');
       ffmpegProcess.kill();
+      // Ensure we stop downloading from RD
+      if (upstreamRes.body && upstreamRes.body.destroy) upstreamRes.body.destroy();
     });
 
   } catch (error) {
@@ -296,7 +314,7 @@ io.on('connection', (socket) => {
 const PORT = 3001;
 server.listen(PORT, () => {
   console.log('///////////////////////////////////////////////////////////');
-  console.log('🚀 SERVER STARTED - VERSION 5.0 (COMPATIBILITY MODE)');
+  console.log('🚀 SERVER STARTED - VERSION 9.0 (PIPE CHAIN METHOD)');
   console.log(`🚀 Listening on port ${PORT}`);
   console.log('///////////////////////////////////////////////////////////');
 });
