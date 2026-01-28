@@ -91,10 +91,23 @@ app.get('/api/proxy-video', async (req, res) => {
 
         if (rdRes.ok) {
           const rdData = await rdRes.json();
-          // Check for streamable flag (1 = has mp4 equivalent)
-          if (rdData.streamable === 1 && rdData.link) {
-            console.log('🚀 RD Streamable Link Found! Redirecting ->', rdData.link);
-            return res.redirect(rdData.link);
+          // Check for ALTERNATIVE (MP4) - The true 'Streamable' file
+          if (rdData.alternative && rdData.alternative.length > 0) {
+            // Log what we found
+            console.log('RD Alternatives found:', rdData.alternative.length);
+
+            // Find the best quality mp4 (usually last in array, or check 'quality' field)
+            // RD usually returns [360, 480, 720, 1080] roughly.
+            // We want the highest quality MP4.
+            const mp4Alt = rdData.alternative.find(alt => alt.quality === '1080p') ||
+              rdData.alternative.find(alt => alt.quality === '720p') ||
+              rdData.alternative[rdData.alternative.length - 1]; // Fallback to last one
+
+            if (mp4Alt && mp4Alt.download) {
+              console.log('🚀 RD MP4 Alternative Found:', mp4Alt.quality, 'Redirecting ->', mp4Alt.download);
+              // Redirect to the MP4 file directly
+              return res.redirect(mp4Alt.download);
+            }
           }
         }
       } catch (rdErr) {
