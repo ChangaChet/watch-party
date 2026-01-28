@@ -149,17 +149,28 @@ app.get('/api/proxy-video', async (req, res) => {
       'Connection': 'keep-alive'
     });
 
-    // OPTIMIZED ARGS FOR RENDER/CLOUD (FASTEST POSSIBLE)
+    // OPTIMIZED ARGS FOR RENDER/CLOUD (COMPATIBILITY MODE - 720p Transcode)
     const ffmpegArgs = [
       '-headers', `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n`,
       '-i', finalLink,
-      // VIDEO: Copy the stream (Zero CPU). 
-      '-c:v', 'copy',
-      // AUDIO: Transcode audio to AAC (Low CPU, ensures web compatibility)
+
+      // VIDEO: Force convert to H.264 (Compatible with all browsers)
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',  // Fastest transcoding
+      '-tune', 'zerolatency',  // Optimize for streaming
+      '-vf', 'scale=-2:720',   // Downscale to 720p to save CPU
+      '-g', '60',              // Keyframe interval
+      '-sc_threshold', '0',
+      '-profile:v', 'main',
+      '-pix_fmt', 'yuv420p',   // Ensure browser compatibility
+
+      // AUDIO: Convert to AAC
       '-c:a', 'aac',
-      '-b:a', '192k',
+      '-b:a', '128k',
       '-ac', '2',
-      // FLAGS: Essential for streaming MP4 over pipe
+      '-af', 'aresample=async=1',
+
+      // FLAGS
       '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
       '-f', 'mp4',
       'pipe:1'
