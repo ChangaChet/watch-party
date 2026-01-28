@@ -103,7 +103,7 @@ app.get('/api/proxy-video', async (req, res) => {
     }
 
     // Check if it's a Real-Debrid link OR an MKV file
-    const isRD = videoUrl.includes('real-debrid.com') || videoUrl.includes('/d/');
+    const isRD = videoUrl.includes('real-debrid.com') || videoUrl.includes('/d/') || videoUrl.includes('torrentio.strem.fun');
 
     if (isRD || isMkv) {
       console.log('Spawning FFmpeg/Proxy for restricted source:', videoUrl);
