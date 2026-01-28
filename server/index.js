@@ -5,7 +5,8 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
-import fetch from 'node-fetch'; // Standard import for cleaner code
+import fetch from 'node-fetch';
+import ffmpegPath from 'ffmpeg-static';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,7 +14,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const server = createServer(app);
 
-// Enable CORS for all origins (Fixes local dev issues)
+// Allow all origins for CORS to prevent blocking
 const io = new Server(server, {
   cors: {
     origin: "*",
@@ -25,23 +26,23 @@ const io = new Server(server, {
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-// Serve static files in production
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '../dist')));
 }
 
 // ---------------------------------------------------------
-// PROXY VIDEO HANDLER (The Fix)
+// PROXY VIDEO HANDLER (VERSION 4.0 - PERFORMANCE MODE)
 // ---------------------------------------------------------
 app.get('/api/proxy-video', async (req, res) => {
   const videoUrl = req.query.url;
+  // RECOMMENDATION: Use process.env.RD_TOKEN in your Render Dashboard
   const RD_TOKEN = 'CPRGHLAYDFGU5TZ4DCYQQQPRRFGZ22FIAIS7OQKK23VE45RWQ5SQ';
 
   if (!videoUrl) {
     return res.status(400).json({ error: 'Missing url parameter' });
   }
 
-  // Helper: Pipe a direct URL to the response (Zero CPU usage)
+  // Helper: Pipe a direct URL (Zero CPU usage)
   const pipeRequest = async (sourceUrl) => {
     try {
       console.log('🔗 Proxying Direct Link:', sourceUrl);
@@ -70,8 +71,6 @@ app.get('/api/proxy-video', async (req, res) => {
     let finalLink = videoUrl;
 
     // --- STRATEGY 1: TORRENTIO "HASH HUNTING" ---
-    // We ignore the torrentio URL and go straight to RD API using the hash.
-    // Regex matches: .../realdebrid/APIKEY/HASH/...
     const match = videoUrl.match(/realdebrid\/[A-Za-z0-9]+\/([a-zA-Z0-9]+)/);
 
     if (match && match[1]) {
@@ -80,7 +79,7 @@ app.get('/api/proxy-video', async (req, res) => {
       console.log('⚡ Hunting for MP4 via RD API...');
 
       try {
-        // 1. Get Torrent ID from Hash (Instant if cached)
+        // 1. Get Torrent ID from Hash
         const magParams = new URLSearchParams();
         magParams.append('magnet', `magnet:?xt=urn:btih:${hash}`);
 
@@ -92,22 +91,21 @@ app.get('/api/proxy-video', async (req, res) => {
         const addData = await addRes.json();
 
         if (addData.id) {
-          // 2. Select Files (Activates the link)
+          // 2. Activate Files
           await fetch(`https://api.real-debrid.com/rest/1.0/torrents/selectFiles/${addData.id}`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${RD_TOKEN}` },
             body: new URLSearchParams({ files: 'all' })
           });
 
-          // 3. Get Links
+          // 3. Get Link Info
           const infoRes = await fetch(`https://api.real-debrid.com/rest/1.0/torrents/info/${addData.id}`, {
             headers: { 'Authorization': `Bearer ${RD_TOKEN}` }
           });
           const infoData = await infoRes.json();
 
           if (infoData.links && infoData.links.length > 0) {
-            // 4. Unrestrict the first link to find the MP4
-            // (Torrentio usually puts the video in the first link)
+            // 4. Unrestrict the first link
             const unrestrictParams = new URLSearchParams();
             unrestrictParams.append('link', infoData.links[0]);
 
@@ -118,9 +116,8 @@ app.get('/api/proxy-video', async (req, res) => {
             });
             const unData = await unRes.json();
 
-            // 5. FIND THE MP4 (The Golden Ticket)
+            // 5. Look for Pre-Made MP4
             if (unData.alternative && unData.alternative.length > 0) {
-              // Find 1080p, then 720p, then whatever is first
               const mp4Alt = unData.alternative.find(alt => alt.quality === '1080p') ||
                 unData.alternative.find(alt => alt.quality === '720p') ||
                 unData.alternative[0];
@@ -131,7 +128,7 @@ app.get('/api/proxy-video', async (req, res) => {
               }
             }
 
-            // Fallback: If no MP4, use the direct download link (resolved from API)
+            // Fallback to MKV
             if (unData.download) {
               console.log('⚠️ No MP4 alternative found. Using direct MKV link from API.');
               finalLink = unData.download;
@@ -143,11 +140,8 @@ app.get('/api/proxy-video', async (req, res) => {
       }
     }
 
-    // --- STRATEGY 2: FFMPEG TRANSCODE ---
-    // Only happens if Hash Hunt failed or no MP4 was found.
-    // finalLink is now likely a direct real-debrid.com link (safe), OR the original torrentio link (unsafe)
-
-    console.log('🎥 Spawning FFmpeg for:', finalLink);
+    // --- STRATEGY 2: FFMPEG REMUX (PERFORMANCE MODE) ---
+    console.log('🎥 Spawning FFmpeg (Copy Mode) for:', finalLink);
 
     res.writeHead(200, {
       'Access-Control-Allow-Origin': '*',
@@ -155,33 +149,31 @@ app.get('/api/proxy-video', async (req, res) => {
       'Connection': 'keep-alive'
     });
 
+    // OPTIMIZED ARGS FOR RENDER/CLOUD (FASTEST POSSIBLE)
     const ffmpegArgs = [
       '-headers', `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n`,
       '-i', finalLink,
-      '-c:v', 'libx264',
-      '-preset', 'ultrafast', // Speed is priority
-      '-tune', 'zerolatency',
-      '-g', '60',
-      '-sc_threshold', '0',
-      '-profile:v', 'main',
-      '-level', '3.1',
-      '-pix_fmt', 'yuv420p',
+      // VIDEO: Copy the stream (Zero CPU). 
+      '-c:v', 'copy',
+      // AUDIO: Transcode audio to AAC (Low CPU, ensures web compatibility)
       '-c:a', 'aac',
-      '-b:a', '128k',
+      '-b:a', '192k',
       '-ac', '2',
-      '-af', 'aresample=async=1',
+      // FLAGS: Essential for streaming MP4 over pipe
       '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
       '-f', 'mp4',
       'pipe:1'
     ];
 
-    const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+    const ffmpegProcess = spawn(ffmpegPath, ffmpegArgs);
     ffmpegProcess.stdout.pipe(res);
 
     ffmpegProcess.stderr.on('data', (data) => {
-      // Only log actual errors
       const msg = data.toString();
-      if (msg.includes('Error') || msg.includes('403')) console.log('FFmpeg Log:', msg.trim());
+      // Log errors to help debug codec issues
+      if (msg.includes('Error') || msg.includes('403') || msg.includes('Could not find tag')) {
+        console.log('FFmpeg Log:', msg.trim());
+      }
     });
 
     req.on('close', () => {
@@ -196,7 +188,7 @@ app.get('/api/proxy-video', async (req, res) => {
 });
 
 // ---------------------------------------------------------
-// REST OF THE SERVER (IMDB, Socket.io)
+// REST OF APP (IMDB, Sockets)
 // ---------------------------------------------------------
 
 app.get('/api/imdb-search', async (req, res) => {
@@ -213,7 +205,6 @@ app.get('/api/imdb-search', async (req, res) => {
 
 const rooms = new Map();
 io.on('connection', (socket) => {
-  // Existing socket logic...
   socket.on('join_room', ({ roomId, username }) => {
     socket.join(roomId);
     if (!rooms.has(roomId)) {
@@ -299,7 +290,7 @@ io.on('connection', (socket) => {
 const PORT = 3001;
 server.listen(PORT, () => {
   console.log('///////////////////////////////////////////////////////////');
-  console.log('🚀 SERVER STARTED - VERSION 2.0 (HASH HUNTER)');
+  console.log('🚀 SERVER STARTED - VERSION 4.0 (PERFORMANCE MODE)');
   console.log(`🚀 Listening on port ${PORT}`);
   console.log('///////////////////////////////////////////////////////////');
 });
