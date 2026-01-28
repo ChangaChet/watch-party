@@ -70,8 +70,38 @@ app.get('/api/proxy-video', async (req, res) => {
   }
 
   const isMkv = videoUrl.toLowerCase().includes('.mkv');
+  const RD_TOKEN = 'CPRGHLAYDFGU5TZ4DCYQQQPRRFGZ22FIAIS7OQKK23VE45RWQ5SQ';
 
   try {
+    // Optimization: Check if Real-Debrid has a streamable MP4 version
+    if (videoUrl.includes('real-debrid.com') || videoUrl.includes('/d/')) {
+      try {
+        console.log('Checking RD streamability...');
+        const fetch = (await import('node-fetch')).default;
+        const params = new URLSearchParams();
+        params.append('link', videoUrl);
+
+        const rdRes = await fetch('https://api.real-debrid.com/rest/1.0/unrestrict/link', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${RD_TOKEN}`
+          },
+          body: params
+        });
+
+        if (rdRes.ok) {
+          const rdData = await rdRes.json();
+          // Check for streamable flag (1 = has mp4 equivalent)
+          if (rdData.streamable === 1 && rdData.link) {
+            console.log('🚀 RD Streamable Link Found! Redirecting ->', rdData.link);
+            return res.redirect(rdData.link);
+          }
+        }
+      } catch (rdErr) {
+        console.warn('RD Stream Check Failed (falling back to FFmpeg):', rdErr.message);
+      }
+    }
+
     if (isMkv) {
       console.log('Spawning FFmpeg (Direct Pipe) for:', videoUrl);
       const fetch = (await import('node-fetch')).default;
