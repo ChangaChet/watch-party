@@ -8,6 +8,8 @@ import SrtToVttConverter, { convertSrtToVtt } from './SrtToVttConverter';
 import SubtitleOverlay from './SubtitleOverlay';
 import VideoJsPlayer from './VideoJsPlayer';
 
+import MovieSearchModal from './MovieSearchModal';
+
 const SOCKET_URL = import.meta.env.PROD
   ? window.location.origin
   : 'http://localhost:3001';
@@ -203,6 +205,7 @@ function App() {
   const [showConverter, setShowConverter] = useState(false); // SRT to VTT converter modal
   const [debugLogs, setDebugLogs] = useState([]);
   const [showDebug, setShowDebug] = useState(false);
+  const [showMovieSearch, setShowMovieSearch] = useState(false);
 
   // Subtitle overlay settings
   const [subtitleContent, setSubtitleContent] = useState(''); // Raw SRT/VTT content
@@ -1447,6 +1450,11 @@ function App() {
     socket.emit('sync_action', { roomId: roomIdRef.current, action: 'play', data: { currentTime } });
   };
 
+
+
+  const handleMovieSelect = (id) => {
+    socket.emit('add_to_playlist', { roomId, videoUrl: id });
+  };
   const handleVideoPause = () => {
     if (isSyncingRef.current) return; // Don't emit if we're syncing from another user
     const currentTime = videoRef.current ? videoRef.current.currentTime : 0;

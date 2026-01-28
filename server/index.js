@@ -34,6 +34,34 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // Low-level FFmpeg Proxy using spawn for maximum control
+app.get('/api/imdb-search', async (req, res) => {
+  const query = req.query.q;
+  if (!query) return res.json({ d: [] });
+  // IMDB suggestion API structure: https://v2.sg.media-imdb.com/suggestion/m/matrix.json
+  const firstChar = query[0].toLowerCase();
+  const url = `https://v2.sg.media-imdb.com/suggestion/${firstChar}/${encodeURIComponent(query)}.json`;
+
+  try {
+    const fetch = (await import('node-fetch')).default;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`IMDB Search failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    res.json(data);
+  } catch (e) {
+    console.error('Search Proxy Error:', e.message);
+    // Return empty results on error to not break frontend
+    res.json({ d: [] });
+  }
+});
+
 app.get('/api/proxy-video', async (req, res) => {
   const videoUrl = req.query.url;
 
