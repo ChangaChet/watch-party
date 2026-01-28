@@ -14,7 +14,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const server = createServer(app);
 
-// Allow all origins for CORS to prevent blocking
+// Allow all origins
 const io = new Server(server, {
   cors: {
     origin: "*",
@@ -31,7 +31,7 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // ---------------------------------------------------------
-// PROXY VIDEO HANDLER (VERSION 4.0 - PERFORMANCE MODE)
+// PROXY VIDEO HANDLER (VERSION 5.0 - COMPATIBILITY MODE)
 // ---------------------------------------------------------
 app.get('/api/proxy-video', async (req, res) => {
   const videoUrl = req.query.url;
@@ -79,7 +79,7 @@ app.get('/api/proxy-video', async (req, res) => {
       console.log('⚡ Hunting for MP4 via RD API...');
 
       try {
-        // 1. Get Torrent ID from Hash
+        // 1. Get Torrent ID
         const magParams = new URLSearchParams();
         magParams.append('magnet', `magnet:?xt=urn:btih:${hash}`);
 
@@ -128,7 +128,6 @@ app.get('/api/proxy-video', async (req, res) => {
               }
             }
 
-            // Fallback to MKV
             if (unData.download) {
               console.log('⚠️ No MP4 alternative found. Using direct MKV link from API.');
               finalLink = unData.download;
@@ -140,8 +139,10 @@ app.get('/api/proxy-video', async (req, res) => {
       }
     }
 
-    // --- STRATEGY 2: FFMPEG REMUX (PERFORMANCE MODE) ---
-    console.log('🎥 Spawning FFmpeg (Copy Mode) for:', finalLink);
+    // --- STRATEGY 2: FFMPEG TRANSCODE (COMPATIBILITY MODE) ---
+    // If we are here, we MUST convert the video because it is likely an MKV/HEVC file
+    // that browsers cannot play directly.
+    console.log('🎥 Spawning FFmpeg (Transcoding Mode) for:', finalLink);
 
     res.writeHead(200, {
       'Access-Control-Allow-Origin': '*',
@@ -149,28 +150,24 @@ app.get('/api/proxy-video', async (req, res) => {
       'Connection': 'keep-alive'
     });
 
-    // OPTIMIZED ARGS FOR RENDER/CLOUD (COMPATIBILITY MODE - 720p Transcode)
     const ffmpegArgs = [
       '-headers', `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n`,
       '-i', finalLink,
 
-      // VIDEO: Force convert to H.264 (Compatible with all browsers)
+      // VIDEO: Force H.264 encoding (The most compatible format)
       '-c:v', 'libx264',
-      '-preset', 'ultrafast',  // Fastest transcoding
+      '-preset', 'ultrafast',  // Fastest encoding to prevent buffering
       '-tune', 'zerolatency',  // Optimize for streaming
-      '-vf', 'scale=-2:720',   // Downscale to 720p to save CPU
-      '-g', '60',              // Keyframe interval
-      '-sc_threshold', '0',
+      '-vf', 'scale=-2:720,format=yuv420p',   // Downscale to 720p & ensure 8-bit color (Critical for web)
+      '-g', '60',              // Keyframe every 2s for smooth seeking
       '-profile:v', 'main',
-      '-pix_fmt', 'yuv420p',   // Ensure browser compatibility
 
-      // AUDIO: Convert to AAC
+      // AUDIO: Force AAC encoding
       '-c:a', 'aac',
       '-b:a', '128k',
       '-ac', '2',
-      '-af', 'aresample=async=1',
 
-      // FLAGS
+      // FLAGS: Required for streaming MP4
       '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
       '-f', 'mp4',
       'pipe:1'
@@ -181,10 +178,8 @@ app.get('/api/proxy-video', async (req, res) => {
 
     ffmpegProcess.stderr.on('data', (data) => {
       const msg = data.toString();
-      // Log errors to help debug codec issues
-      if (msg.includes('Error') || msg.includes('403') || msg.includes('Could not find tag')) {
-        console.log('FFmpeg Log:', msg.trim());
-      }
+      // Log errors to help debug
+      if (msg.includes('Error') || msg.includes('403')) console.log('FFmpeg Log:', msg.trim());
     });
 
     req.on('close', () => {
@@ -199,7 +194,7 @@ app.get('/api/proxy-video', async (req, res) => {
 });
 
 // ---------------------------------------------------------
-// REST OF APP (IMDB, Sockets)
+// REST OF APP
 // ---------------------------------------------------------
 
 app.get('/api/imdb-search', async (req, res) => {
@@ -301,7 +296,7 @@ io.on('connection', (socket) => {
 const PORT = 3001;
 server.listen(PORT, () => {
   console.log('///////////////////////////////////////////////////////////');
-  console.log('🚀 SERVER STARTED - VERSION 4.0 (PERFORMANCE MODE)');
+  console.log('🚀 SERVER STARTED - VERSION 5.0 (COMPATIBILITY MODE)');
   console.log(`🚀 Listening on port ${PORT}`);
   console.log('///////////////////////////////////////////////////////////');
 });
