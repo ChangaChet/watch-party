@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import './App.css';
-import './VideoJsTheme.css';
 import EmbedPlayer from './EmbedPlayer';
-import MovieSearchModal from './MovieSearchModal';
+
 
 const SOCKET_URL = import.meta.env.PROD
   ? window.location.origin
@@ -14,13 +13,9 @@ const socket = io(SOCKET_URL);
 // Simple WebRTC Video Component for User Cameras
 const VideoPlayer = ({ stream, muted = false }) => {
   const videoRef = useRef(null);
-
   useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
-    }
+    if (videoRef.current && stream) videoRef.current.srcObject = stream;
   }, [stream]);
-
   return (
     <video
       ref={videoRef}
@@ -39,26 +34,20 @@ function App() {
 
   const [playlist, setPlaylist] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
 
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [videoUrl, setVideoUrl] = useState('');
   const [activeTab, setActiveTab] = useState('chat');
   const [users, setUsers] = useState([]);
+  const [reactions, setReactions] = useState([]);
+
 
   // WebRTC State
   const [localStream, setLocalStream] = useState(null);
   const [remoteStreams, setRemoteStreams] = useState([]);
   const [isMuted, setIsMuted] = useState(true);
-  const [facingMode, setFacingMode] = useState('user');
-  const [adminId, setAdminId] = useState(null);
-  const [permissions, setPermissions] = useState('open');
-  const [reactions, setReactions] = useState([]);
-  const [speakingUsers, setSpeakingUsers] = useState(new Set());
 
-  const videoRef = useRef(null);
-  const localVideoRef = useRef(null);
   const messagesEndRef = useRef(null);
   const roomIdRef = useRef('');
   const usernameRef = useRef('');
@@ -66,150 +55,13 @@ function App() {
   const localStreamRef = useRef(null);
   const makingOfferRef = useRef({});
   const ignoringOfferRef = useRef({});
+  const localVideoRef = useRef(null);
 
   const currentVideoUrl = playlist[currentIndex];
 
-  // Socket Connection Logic
-  useEffect(() => {
-    socket.on('connect', () => {
-      console.log('Connected:', socket.id);
-      if (roomIdRef.current && usernameRef.current) {
-        socket.emit('join_room', { roomId: roomIdRef.current, username: usernameRef.current });
-      }
-    });
-
-    socket.on('room_state', (data) => {
-      setPlaylist(data.playlist);
-      setCurrentIndex(data.currentIndex);
-      setIsPlaying(data.isPlaying);
-      setUsers(data.users || []);
-      setAdminId(data.adminId);
-      setPermissions(data.permissions || 'open');
-      setMessages(data.messages.map(msg => ({
-        username: msg.username,
-        text: msg.message,
-        timestamp: msg.timestamp
-      })));
-      setJoined(true);
-    });
-
-    socket.on('playlist_updated', (data) => {
-      if (Array.isArray(data)) setPlaylist(data);
-      else if (data.playlist) {
-        setPlaylist(data.playlist);
-        if (data.currentIndex !== undefined) setCurrentIndex(data.currentIndex);
-      }
-    });
-
-    socket.on('video_changed', ({ currentIndex: index }) => {
-      setCurrentIndex(index);
-    });
-
-    // WebRTC & Chat Events
-    socket.on('user_joined', ({ username: newUser, users: updatedUsers }) => {
-      if (updatedUsers) setUsers(updatedUsers);
-      updatedUsers.forEach((user) => {
-        if (user.id !== socket.id && !peersRef.current[user.id]) {
-          const peer = createPeer(user.id, true);
-          peersRef.current[user.id] = { peer, polite: false };
-        }
-      });
-    });
-
-    socket.on('user_left', ({ username: leftUser, users: updatedUsers }) => {
-      if (updatedUsers) setUsers(updatedUsers);
-      const currentIds = updatedUsers.map(u => u.id);
-      Object.keys(peersRef.current).forEach(peerId => {
-        if (!currentIds.includes(peerId)) {
-          if (peersRef.current[peerId].peer) peersRef.current[peerId].peer.close();
-          delete peersRef.current[peerId];
-        }
-      });
-      setRemoteStreams(prev => prev.filter(s => currentIds.includes(s.id)));
-    });
-
-    socket.on('chat_message', (message) => {
-      setMessages((prev) => [...prev, {
-        username: message.username,
-        text: message.message,
-        timestamp: message.timestamp
-      }]);
-    });
-
-    // Pass-through signaling
-    socket.on('offer', async ({ offer, callerId }) => {
-      let peerObj = peersRef.current[callerId];
-      let peer;
-      if (peerObj) peer = peerObj.peer;
-      else {
-        peer = createPeer(callerId, false);
-        peersRef.current[callerId] = { peer, polite: true };
-      }
-      try {
-        const offerCollision = (peer.signalingState !== 'stable') || makingOfferRef.current[callerId];
-        const polite = peersRef.current[callerId]?.polite ?? true;
-        ignoringOfferRef.current[callerId] = !polite && offerCollision;
-        if (ignoringOfferRef.current[callerId]) return;
-
-        if (peer.signalingState !== 'stable') {
-          await Promise.all([
-            peer.setLocalDescription({ type: 'rollback' }),
-            peer.setRemoteDescription(new RTCSessionDescription(offer))
-          ]);
-        } else {
-          await peer.setRemoteDescription(new RTCSessionDescription(offer));
-        }
-
-        // Add local tracks
-        if (localStreamRef.current) {
-          localStreamRef.current.getTracks().forEach(track => {
-            peer.addTrack(track, localStreamRef.current);
-          });
-        }
-
-        const answer = await peer.createAnswer();
-        await peer.setLocalDescription(answer);
-        socket.emit('answer', { answer: peer.localDescription, target: callerId, callerId: socket.id });
-      } catch (err) { console.error(err); }
-    });
-
-    socket.on('answer', async ({ answer, callerId }) => {
-      const peerObj = peersRef.current[callerId];
-      if (peerObj && peerObj.peer) {
-        await peerObj.peer.setRemoteDescription(new RTCSessionDescription(answer));
-      }
-    });
-
-    socket.on('ice-candidate', async ({ candidate, callerId }) => {
-      const peerObj = peersRef.current[callerId];
-      if (peerObj && peerObj.peer) {
-        await peerObj.peer.addIceCandidate(new RTCIceCandidate(candidate));
-      }
-    });
-
-    socket.on('reaction_received', ({ emoji }) => {
-      const id = Date.now() + Math.random();
-      const x = Math.random() * 80 + 10;
-      setReactions(prev => [...prev, { id, emoji, x }]);
-      setTimeout(() => setReactions(prev => prev.filter(r => r.id !== id)), 2000);
-    });
-
-    return () => {
-      socket.off('connect');
-      socket.off('room_state');
-      socket.off('playlist_updated');
-      socket.off('video_changed');
-      socket.off('user_joined');
-      socket.off('user_left');
-      socket.off('chat_message');
-    };
-  }, []);
-
-  // Helper to create Peer
+  // WebRTC Helper
   const createPeer = (targetId, isInitiator = false) => {
-    const peer = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-    });
+    const peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
     peer.onicecandidate = (e) => {
       if (e.candidate) socket.emit('ice-candidate', { candidate: e.candidate, target: targetId, callerId: socket.id });
     };
@@ -222,6 +74,119 @@ function App() {
     };
     return peer;
   };
+
+  // --- SOCKET CONNECTION ---
+  useEffect(() => {
+    socket.on('connect', () => {
+      if (roomIdRef.current && usernameRef.current) {
+        socket.emit('join_room', { roomId: roomIdRef.current, username: usernameRef.current });
+      }
+    });
+
+    socket.on('room_state', (data) => {
+      setPlaylist(data.playlist || []);
+      setCurrentIndex(data.currentIndex || 0);
+      setUsers(data.users || []);
+      setMessages(data.messages.map(msg => ({
+        username: msg.username, text: msg.message, timestamp: msg.timestamp
+      })));
+      setJoined(true);
+    });
+
+    socket.on('playlist_updated', (data) => {
+      if (Array.isArray(data)) setPlaylist(data);
+      else if (data.playlist) {
+        setPlaylist(data.playlist);
+        if (data.currentIndex !== undefined) setCurrentIndex(data.currentIndex);
+      }
+    });
+
+    socket.on('video_changed', ({ currentIndex: index }) => setCurrentIndex(index));
+
+    socket.on('chat_message', (message) => {
+      setMessages((prev) => [...prev, {
+        username: message.username, text: message.message, timestamp: message.timestamp
+      }]);
+    });
+
+    socket.on('reaction_received', ({ emoji }) => {
+      const id = Date.now() + Math.random();
+      const x = Math.random() * 80 + 10;
+      setReactions(prev => [...prev, { id, emoji, x }]);
+      setTimeout(() => setReactions(prev => prev.filter(r => r.id !== id)), 2000);
+    });
+
+    // WebRTC Listeners
+    socket.on('user_joined', ({ users: updatedUsers }) => {
+      if (updatedUsers) setUsers(updatedUsers);
+      updatedUsers.forEach((user) => {
+        if (user.id !== socket.id && !peersRef.current[user.id]) {
+          const peer = createPeer(user.id, true);
+          peersRef.current[user.id] = { peer, polite: false };
+        }
+      });
+    });
+
+    socket.on('user_left', ({ users: updatedUsers }) => {
+      if (updatedUsers) setUsers(updatedUsers);
+      const currentIds = updatedUsers.map(u => u.id);
+      Object.keys(peersRef.current).forEach(peerId => {
+        if (!currentIds.includes(peerId)) {
+          if (peersRef.current[peerId].peer) peersRef.current[peerId].peer.close();
+          delete peersRef.current[peerId];
+        }
+      });
+      setRemoteStreams(prev => prev.filter(s => currentIds.includes(s.id)));
+    });
+
+    socket.on('offer', async ({ offer, callerId }) => {
+      let peerObj = peersRef.current[callerId];
+      let peer;
+      if (peerObj) peer = peerObj.peer;
+      else {
+        peer = createPeer(callerId, false);
+        peersRef.current[callerId] = { peer, polite: true };
+      }
+      try {
+        const offerCollision = (peer.signalingState !== 'stable') || makingOfferRef.current[callerId];
+        const polite = peersRef.current[callerId]?.polite ?? true;
+        if (!polite && offerCollision) return;
+
+        if (peer.signalingState !== 'stable') {
+          await Promise.all([
+            peer.setLocalDescription({ type: 'rollback' }),
+            peer.setRemoteDescription(new RTCSessionDescription(offer))
+          ]);
+        } else {
+          await peer.setRemoteDescription(new RTCSessionDescription(offer));
+        }
+        if (localStreamRef.current) {
+          localStreamRef.current.getTracks().forEach(track => peer.addTrack(track, localStreamRef.current));
+        }
+        const answer = await peer.createAnswer();
+        await peer.setLocalDescription(answer);
+        socket.emit('answer', { answer: peer.localDescription, target: callerId, callerId: socket.id });
+      } catch (err) { console.error(err); }
+    });
+
+    socket.on('answer', async ({ answer, callerId }) => {
+      const peerObj = peersRef.current[callerId];
+      if (peerObj?.peer) await peerObj.peer.setRemoteDescription(new RTCSessionDescription(answer));
+    });
+
+    socket.on('ice-candidate', async ({ candidate, callerId }) => {
+      const peerObj = peersRef.current[callerId];
+      if (peerObj?.peer) await peerObj.peer.addIceCandidate(new RTCIceCandidate(candidate));
+    });
+
+    return () => {
+      socket.off('connect'); socket.off('room_state'); socket.off('playlist_updated');
+      socket.off('video_changed'); socket.off('chat_message'); socket.off('user_joined');
+      socket.off('user_left'); socket.off('offer'); socket.off('answer'); socket.off('ice-candidate');
+    };
+  }, []);
+
+
 
   // UI Handlers
   const handleJoinRoom = (e) => {
@@ -240,10 +205,7 @@ function App() {
         setLocalStream(stream);
         localStreamRef.current = stream;
         setIsMuted(false);
-        // Add to peers
-        Object.values(peersRef.current).forEach(({ peer }) => {
-          stream.getTracks().forEach(track => peer.addTrack(track, stream));
-        });
+        Object.values(peersRef.current).forEach(({ peer }) => stream.getTracks().forEach(track => peer.addTrack(track, stream)));
       } catch (e) { console.error(e); }
     } else {
       const audioTrack = localStream.getAudioTracks()[0];
@@ -255,7 +217,6 @@ function App() {
   };
 
   const handleToggleWebcam = async () => {
-    // Basic webcam toggle implementation
     if (localStream && localStream.getVideoTracks().length > 0) {
       localStream.getVideoTracks()[0].stop();
       localStream.removeTrack(localStream.getVideoTracks()[0]);
@@ -271,10 +232,7 @@ function App() {
           setLocalStream(vStream);
           localStreamRef.current = vStream;
         }
-        // Add track to peers
-        Object.values(peersRef.current).forEach(({ peer }) => {
-          peer.addTrack(track, localStream || vStream);
-        });
+        Object.values(peersRef.current).forEach(({ peer }) => peer.addTrack(track, localStream || vStream));
       } catch (e) { console.error(e); }
     }
   };
@@ -295,11 +253,12 @@ function App() {
     }
   };
 
+
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // --- RENDER ---
   if (!joined) {
     return (
       <div className="join-screen">
@@ -329,31 +288,19 @@ function App() {
       <main className="main-content">
         <div className="player-section">
           <div className="player-wrapper">
-            {/* --- NEW PLAYER COMPONENT --- */}
             {currentVideoUrl ? (
               <div className="player-container" style={{ width: '100%', height: '100%' }}>
-                <EmbedPlayer
-                  videoId={currentVideoUrl}
-                  socket={socket}
-                  roomId={roomId}
-                />
+                <EmbedPlayer videoId={currentVideoUrl} socket={socket} roomId={roomId} />
               </div>
             ) : (
               <div className="empty-player">
-                <p>Enter an IMDB ID to start watching.</p>
-                <div style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.5rem' }}>
-                  Movies: <code>tt1234567</code><br />
-                  TV Shows: <code>tt1234567 s1 e1</code>
-                </div>
+                <p>Add a movie to start watching.</p>
+
               </div>
             )}
-
-            {/* Reaction Overlay */}
             <div className="reactions-container" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
               {reactions.map(r => (
-                <div key={r.id} style={{ position: 'absolute', left: `${r.x}%`, bottom: '0', fontSize: '2rem', animation: 'floatUp 2s ease-out forwards' }}>
-                  {r.emoji}
-                </div>
+                <div key={r.id} style={{ position: 'absolute', left: `${r.x}%`, bottom: '0', fontSize: '2rem', animation: 'floatUp 2s ease-out forwards' }}>{r.emoji}</div>
               ))}
             </div>
           </div>
@@ -361,14 +308,11 @@ function App() {
           <div className="controls glass">
             <div className="reaction-bar" style={{ display: 'flex', gap: '0.5rem' }}>
               {['❤️', '😂', '😲', '🎉', '🔥'].map(emoji => (
-                <button key={emoji} onClick={() => socket.emit('send_reaction', { roomId: roomIdRef.current, emoji })} style={{ background: 'none', border: 'none', fontSize: '1.5rem', cursor: 'pointer' }}>
-                  {emoji}
-                </button>
+                <button key={emoji} onClick={() => socket.emit('send_reaction', { roomId: roomIdRef.current, emoji })} style={{ background: 'none', border: 'none', fontSize: '1.5rem', cursor: 'pointer' }}>{emoji}</button>
               ))}
             </div>
           </div>
 
-          {/* User Cams Grid */}
           <div className="video-grid">
             <div className={`video-card`}>
               <video ref={localVideoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
@@ -390,7 +334,6 @@ function App() {
           </div>
         </div>
 
-        {/* Sidebar */}
         <aside className="sidebar glass">
           <div className="tabs">
             <button className={`tab-btn ${activeTab === 'chat' ? 'active' : ''}`} onClick={() => setActiveTab('chat')}>Chat</button>
@@ -414,9 +357,12 @@ function App() {
             </div>
           ) : (
             <div className="playlist-section">
-              <form onSubmit={handleAddVideo}>
-                <input className="input" placeholder="IMDB ID (tt12345)" value={videoUrl} onChange={e => setVideoUrl(e.target.value)} />
-                <button type="submit" className="btn">+ Add</button>
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+
+              </div>
+              <form onSubmit={handleAddVideo} style={{ display: 'flex', gap: '0.5rem' }}>
+                <input className="input" placeholder="Or enter ID (tt123...)" value={videoUrl} onChange={e => setVideoUrl(e.target.value)} style={{ flex: 1 }} />
+                <button type="submit" className="btn" style={{ minWidth: '40px' }}>+</button>
               </form>
               <div className="playlist-items">
                 {playlist.map((url, idx) => (
@@ -429,6 +375,8 @@ function App() {
           )}
         </aside>
       </main>
+
+
     </div>
   );
 }
